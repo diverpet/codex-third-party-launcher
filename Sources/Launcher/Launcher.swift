@@ -253,8 +253,21 @@ private final class Launcher: NSObject, NSApplicationDelegate {
         let key = NSSecureTextField()
         key.placeholderString = "API key (this launch only)"
         let excludeGPT = NSButton(checkboxWithTitle: "排除 GPT 系列模型（推荐）", target: nil, action: nil)
-        excludeGPT.toolTip = "启用后，隔离实例的 GPT 系列请求会在本机拦截。"
-        let stack = NSStackView(views: [address, key, excludeGPT])
+        let explanation = """
+        Codex Desktop 可能在后台调用 GPT 系列模型（例如 gpt-6-luna），产生额外用量。
+        勾选后，Launcher 会在菜单中隐藏这些模型，并在本机拦截发往当前网关的 GPT 系列请求。
+        """
+        excludeGPT.setAccessibilityHelp(explanation)
+        let helpIcon = NSImageView()
+        helpIcon.image = NSImage(systemSymbolName: "info.circle", accessibilityDescription: "GPT 排除说明")
+        helpIcon.contentTintColor = .secondaryLabelColor
+        helpIcon.toolTip = explanation
+        helpIcon.setAccessibilityHelp(explanation)
+        let filterRow = NSStackView(views: [excludeGPT, helpIcon])
+        filterRow.orientation = .horizontal
+        filterRow.alignment = .centerY
+        filterRow.spacing = 6
+        let stack = NSStackView(views: [address, key, filterRow])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8
