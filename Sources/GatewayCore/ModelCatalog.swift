@@ -1,24 +1,44 @@
 import Foundation
 
 public struct ModelOverrides: Decodable {
+    public struct ReasoningEfforts: Decodable {
+        private static let knownLevels: Set<String> = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]
+        let levels: [String]
+        let defaultEffort: String
+
+        var isValid: Bool {
+            let unique = Set(levels)
+            return levels.count == unique.count && unique.isSubset(of: Self.knownLevels) && unique.contains(defaultEffort)
+        }
+    }
+
     public let excludePrefixes: [String]
     public let inputModalities: [String: [String]]
+    public let reasoningEfforts: [String: ReasoningEfforts]
+
+    public var declaredReasoningLevels: Set<String> {
+        Set(reasoningEfforts.values.flatMap(\.levels))
+    }
 
     public init(excludePrefixes: [String] = [], inputModalities: [String: [String]] = [:]) {
         self.excludePrefixes = excludePrefixes
         self.inputModalities = inputModalities
+        self.reasoningEfforts = [:]
     }
 
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         excludePrefixes = try values.decodeIfPresent([String].self, forKey: .excludePrefixes) ?? []
         inputModalities = try values.decodeIfPresent([String: [String]].self, forKey: .inputModalities) ?? [:]
+        reasoningEfforts = try values.decodeIfPresent([String: ReasoningEfforts].self, forKey: .reasoningEfforts) ?? [:]
         guard !excludePrefixes.contains(""), inputModalities.values.allSatisfy({
             !$0.isEmpty && $0.allSatisfy { ["text", "image"].contains($0) }
-        }) else { throw LauncherError.invalidPolicy }
+        }), reasoningEfforts.allSatisfy({ !$0.key.isEmpty && $0.value.isValid }) else {
+            throw LauncherError.invalidPolicy
+        }
     }
 
-    private enum CodingKeys: String, CodingKey { case excludePrefixes, inputModalities }
+    private enum CodingKeys: String, CodingKey { case excludePrefixes, inputModalities, reasoningEfforts }
 }
 
 public enum ModelCatalog {
@@ -37,6 +57,10 @@ public enum ModelCatalog {
             }.enumerated().compactMap { index, entry in
                 guard let id = entry["id"] as? String else { return nil }
                 var model = defaults[id] ?? genericModel(id, priority: 1_000 + index)
+                // A matching ID in the bundled catalog does not describe the gateway's route.
+                model["supported_reasoning_levels"] = []
+                model.removeValue(forKey: "default_reasoning_level")
+                model.removeValue(forKey: "supports_reasoning_effort_updates")
                 if let declared = entry["input_modalities"] as? [String] {
                     model["input_modalities"] = declared.contains("image") ? ["text", "image"] : ["text"]
                 }
@@ -60,6 +84,12 @@ public enum ModelCatalog {
             model["max_context_window"] = contextWindow
             if let override = overrides.inputModalities[id] {
                 model["input_modalities"] = override
+            }
+            if let reasoning = overrides.reasoningEfforts[id] {
+                model["default_reasoning_level"] = reasoning.defaultEffort
+                model["supported_reasoning_levels"] = reasoning.levels.map { level in
+                    ["effort": level, "description": "Use the \(level) reasoning level."]
+                }
             }
             return model
         }

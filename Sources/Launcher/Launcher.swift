@@ -101,6 +101,12 @@ private final class Launcher: NSObject, NSApplicationDelegate {
         if !files.fileExists(atPath: config.path) {
             try writePrivate(Data(try gateway.configuration(catalog: catalog, userHome: home).utf8), to: config)
         }
+        let reasoningLevels = overrides.declaredReasoningLevels
+        if !reasoningLevels.isEmpty {
+            let original = try String(contentsOf: config, encoding: .utf8)
+            let configured = Gateway.enableReasoningLevels(reasoningLevels, in: original)
+            if configured != original { try writePrivate(Data(configured.utf8), to: config) }
+        }
 
         var environment = ProcessInfo.processInfo.environment
         for name in ["OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN",

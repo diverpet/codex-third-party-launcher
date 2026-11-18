@@ -9,6 +9,8 @@ struct GatewayCoreTests {
         try tests.testGatewayNormalizationAndKeyHandling()
         try tests.testCatalogIDsAndImageClassification()
         try tests.testCatalogUsesLaunchContextWindow()
+        try tests.testReasoningLevelsUsePerGatewayDeclarations()
+        tests.testDesktopReasoningLevelsPreserveSettings()
         try tests.testCatalogFiltersOnlyExplicitNonResponsesModels()
         try tests.testGPTExclusionUsesSameModelIDsAsProxy()
         try tests.testChatGPTModelsAreDistinctFromGatewayModels()
@@ -146,6 +148,67 @@ struct GatewayCoreTests {
         let result = try ModelCatalog.make(gatewayResponse: response, bundledCatalog: { nil }, excludeGPT: true)
         let catalog = try unwrap(JSONSerialization.jsonObject(with: result) as? [String: [[String: Any]]])
         assertEqual(catalog["models"]?.compactMap { $0["slug"] as? String }, ["deepseek-v4"])
+    }
+
+    func testReasoningLevelsUsePerGatewayDeclarations() throws {
+        let gateway = Data(#"{"data":[{"id":"known"},{"id":"tunable"},{"id":"chatgpt/native"},{"id":"filtered","supported_apis":["chat.completions"]}]}"#.utf8)
+        let bundled = Data(#"{"models":[{"slug":"known","visibility":"list","supported_in_api":true,"default_reasoning_level":"high","supported_reasoning_levels":[{"effort":"high","description":"Bundled"}],"supports_reasoning_effort_updates":true}]}"#.utf8)
+        let account = Data(#"{"models":[{"slug":"chatgpt/native","visibility":"list","default_reasoning_level":"high","supported_reasoning_levels":[{"effort":"high","description":"Official"}]}]}"#.utf8)
+        let overrides = try JSONDecoder().decode(ModelOverrides.self, from: Data("""
+            {"reasoningEfforts":{
+                "tunable":{"levels":["low","high","max"],"defaultEffort":"high"},
+                "chatgpt/native":{"levels":["low"],"defaultEffort":"low"},
+                "filtered":{"levels":["low","high"],"defaultEffort":"low"}
+            }}
+            """.utf8))
+        let result = try ModelCatalog.make(gatewayResponse: gateway, bundledCatalog: { bundled }, overrides: overrides,
+                                           excludeGPT: true, chatGPTCatalog: account)
+        let catalog = try unwrap(JSONSerialization.jsonObject(with: result) as? [String: [[String: Any]]])
+        let byID = Dictionary(uniqueKeysWithValues: try unwrap(catalog["models"]).map { model in
+            (model["slug"] as? String ?? "", model)
+        })
+        assertEqual(Set(byID.keys), ["known", "tunable", "chatgpt/native"])
+        assertEqual(byID["known"]?["supported_reasoning_levels"] as? [[String: String]], [])
+        assertTrue(byID["known"]?["default_reasoning_level"] == nil)
+        assertTrue(byID["known"]?["supports_reasoning_effort_updates"] == nil)
+        assertEqual(byID["tunable"]?["default_reasoning_level"] as? String, "high")
+        let levels = byID["tunable"]?["supported_reasoning_levels"] as? [[String: String]]
+        assertEqual(levels?.compactMap { $0["effort"] }, ["low", "high", "max"])
+        assertEqual(byID["chatgpt/native"]?["default_reasoning_level"] as? String, "high")
+        assertEqual(byID["chatgpt/native"]?["supported_reasoning_levels"] as? [[String: String]],
+                    [["effort": "high", "description": "Official"]])
+        for invalid in [
+            #"{"levels":[],"defaultEffort":"high"}"#,
+            #"{"levels":["low","low"],"defaultEffort":"low"}"#,
+            #"{"levels":["low","high"],"defaultEffort":"medium"}"#,
+            #"{"levels":["unsupported"],"defaultEffort":"unsupported"}"#,
+        ] {
+            let fixture = Data("{\"reasoningEfforts\":{\"tunable\":\(invalid)}}".utf8)
+            assertThrows(try JSONDecoder().decode(ModelOverrides.self, from: fixture))
+        }
+    }
+
+    func testDesktopReasoningLevelsPreserveSettings() {
+        let profile = """
+            model_provider = "thirdparty"
+
+            [desktop]
+            conversationDetailMode = "expanded"
+
+            [features]
+            web_search = false
+            """
+        let configured = Gateway.enableReasoningLevels(["low", "max"], in: profile)
+        assertTrue(configured.contains(#"[desktop]"# + "\n" +
+            #"enabled-reasoning-efforts = ["low", "medium", "high", "xhigh", "ultra", "persistent", "max"]"#))
+        assertTrue(configured.contains(#"conversationDetailMode = "expanded""#))
+        assertTrue(configured.hasSuffix("[features]\nweb_search = false"))
+        assertEqual(Gateway.enableReasoningLevels(["max"], in: configured), configured)
+        assertEqual(Gateway.enableReasoningLevels(["low", "high"], in: profile), profile)
+        let dotted = #"desktop.enabled-reasoning-efforts = ["low"]"#
+        assertEqual(Gateway.enableReasoningLevels(["max"], in: dotted), dotted)
+        let new = Gateway.enableReasoningLevels(["max"], in: #"model_provider = "thirdparty""#)
+        assertTrue(new.contains("\n[desktop]\nenabled-reasoning-efforts = ["))
     }
 
     func testChatGPTModelsAreDistinctFromGatewayModels() throws {

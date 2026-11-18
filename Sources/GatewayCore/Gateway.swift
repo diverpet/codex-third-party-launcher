@@ -25,7 +25,7 @@ public enum LauncherError: LocalizedError {
         case .missingModels:
             return "The gateway did not return any usable models. Check your Base URL, key permissions, Responses API support, and local catalog filters."
         case .invalidPolicy:
-            return "The model overrides file contains an invalid input modality or empty exclusion prefix."
+            return "Check exclusion prefixes, input modalities, and reasoning levels in model-overrides.json. A model's default reasoning level must be one of its available levels."
         case .proxyUnavailable:
             return "The local GPT filter could not start. Reinstall the launcher and try again."
         case .proxyConfiguration:
@@ -123,6 +123,27 @@ public struct Gateway {
 
     public static func isGPTModel(_ id: String) -> Bool {
         id.trimmingCharacters(in: .whitespacesAndNewlines).range(of: gptModelPattern, options: .regularExpression) != nil
+    }
+
+    public static func enableReasoningLevels(_ levels: Set<String>, in configuration: String) -> String {
+        // The Desktop picker applies this preference on top of each model's catalog.
+        let defaults = ["low", "medium", "high", "xhigh", "ultra", "persistent"]
+        let additional = ["none", "minimal", "max"].filter(levels.contains)
+        let explicitPreference = #"(?m)^\s*(enabled-reasoning-efforts|"enabled-reasoning-efforts"|'enabled-reasoning-efforts')\s*="#
+        guard !additional.isEmpty,
+              configuration.range(of: explicitPreference, options: .regularExpression) == nil else { return configuration }
+        let entry = "enabled-reasoning-efforts = [" + (defaults + additional).map { "\"\($0)\"" }.joined(separator: ", ") + "]"
+        var lines = configuration.components(separatedBy: "\n")
+        if let table = lines.firstIndex(where: {
+            $0.range(of: #"^\s*\[\s*(desktop|"desktop"|'desktop')\s*\]\s*(#.*)?$"#, options: .regularExpression) != nil
+        }) {
+            lines.insert(entry, at: table + 1)
+            return lines.joined(separator: "\n")
+        }
+        // Preserve a profile that represents Desktop settings as an inline table or dotted keys.
+        let customRoot = #"(?m)^\s*(desktop|"desktop"|'desktop')\s*[.=]"#
+        guard configuration.range(of: customRoot, options: .regularExpression) == nil else { return configuration }
+        return configuration + "\n[desktop]\n" + entry + "\n"
     }
 
     public func configuration(_ existing: String, forLocalProxy proxyURL: URL) throws -> String {

@@ -36,7 +36,7 @@
 
 菜单显示实际请求使用的 model code。
 
-如需隐藏某些前缀或为网关缺少元数据的模型声明图片输入，第一次启动后，在对应的 `~/.codex-thirdparty/gateways/<profile-id>/` 目录创建 `model-overrides.json`，然后重启第三方实例。可以通过该目录 `config.toml` 中的 `base_url` 找到对应的网关。
+如需隐藏某些前缀或声明网关模型的图片输入和推理档位，第一次启动后，在对应的 `~/.codex-thirdparty/gateways/<profile-id>/` 目录创建 `model-overrides.json`，然后重启第三方实例。可以通过该目录 `config.toml` 中的 `base_url` 找到对应的网关。
 
 ```json
 {
@@ -44,9 +44,19 @@
   "inputModalities": {
     "example-vision-model": ["text", "image"],
     "example-text-model": ["text"]
+  },
+  "reasoningEfforts": {
+    "example-reasoning-model": {
+      "levels": ["low", "high", "max"],
+      "defaultEffort": "high"
+    }
   }
 }
 ```
+
+只填写实际网关允许通过 Responses 的 `reasoning.effort` 选择的档位。默认值必须在档位列表里。OpenAI 标准 `/models` 返回模型 ID，Launcher 从本地配置获取这些模型的档位。Codex 原生目录和 ChatGPT 账户模型可提供自己的档位。
+
+对于 Desktop 默认隐藏的档位，启动器会补充隔离实例的档位可见性。已有 `[desktop]` 的 `enabled-reasoning-efforts` 设置优先。
 
 不要把真实网关配置、模型目录或密钥提交进仓库。
 
