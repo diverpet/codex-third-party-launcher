@@ -8,6 +8,7 @@ struct GatewayCoreTests {
         let tests = Self()
         try tests.testGatewayNormalizationAndKeyHandling()
         try tests.testCatalogIDsAndImageClassification()
+        try tests.testCatalogUsesOptionalContextLimits()
         try tests.testCatalogFiltersOnlyExplicitNonResponsesModels()
         try tests.testGPTExclusionUsesSameModelIDsAsProxy()
         try tests.testChatGPTModelsAreDistinctFromGatewayModels()
@@ -74,6 +75,36 @@ struct GatewayCoreTests {
         let model = try unwrap(catalog["models"]?.first)
         assertEqual(model["display_name"] as? String, "test")
         assertEqual(model["priority"] as? Int, 17)
+        assertEqual(model["context_window"] as? Int, 272000)
+    }
+
+    func testCatalogUsesOptionalContextLimits() throws {
+        let response = Data("""
+            {"data":[
+                {"id":"window","context_window":64000},
+                {"id":"input","max_input_tokens":48000},
+                {"id":"limited","context_window":128000,"max_input_tokens":64000},
+                {"id":"known"},
+                {"id":"unknown"},
+                {"id":"invalid","context_window":true,"max_input_tokens":10.5},
+                {"id":"zero","context_window":0,"max_input_tokens":-100},
+                {"id":"out-of-range","context_window":999999999999}
+            ]}
+            """.utf8)
+        let stock = Data("""
+            {"models":[{"slug":"known","visibility":"list","supported_in_api":true,"context_window":32000}]}
+            """.utf8)
+        let result = try ModelCatalog.make(gatewayResponse: response, bundledCatalog: { stock })
+        let catalog = try unwrap(JSONSerialization.jsonObject(with: result) as? [String: [[String: Any]]])
+        let models = try unwrap(catalog["models"])
+        let limits = Dictionary(uniqueKeysWithValues: models.compactMap { model -> (String, Int)? in
+            guard let id = model["slug"] as? String, let limit = model["context_window"] as? Int else { return nil }
+            return (id, limit)
+        })
+        assertEqual(limits, [
+            "window": 64000, "input": 48000, "limited": 64000, "known": 32000,
+            "unknown": 272000, "invalid": 272000, "zero": 272000, "out-of-range": 272000,
+        ])
     }
 
     func testCatalogFiltersOnlyExplicitNonResponsesModels() throws {

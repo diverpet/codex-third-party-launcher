@@ -32,6 +32,7 @@
 
 - `supported_apis` 为字符串数组时，只有包含 `"responses"` 的模型会显示在菜单。字段缺省或为 `null` 时保留模型。
 - `input_modalities` 可声明 `["text"]` 或 `["text","image"]`。普通模型列表缺少该字段时，启动器按模型 ID 查找 Codex 内置目录，找不到时默认使用文本输入。
+- `context_window` 和 `max_input_tokens` 可声明模型的 token 上限。启动器取可用上限中的较小值，为 Codex 的上下文用量显示和自动压缩提供窗口大小。网关和内置目录都未提供窗口时，启动器按 272,000 token 估算。
 
 菜单显示实际请求使用的 model code。
 
