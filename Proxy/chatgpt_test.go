@@ -49,6 +49,11 @@ func TestChatGPTAuthorizedRoutesKeepCredentialsSeparate(t *testing.T) {
 			len(payload["metadata"]) != 0 || !strings.HasPrefix(string(payload["input"]), "[") {
 			t.Error("ChatGPT request was not adapted to the documented Responses contract")
 		}
+		var tools []map[string]any
+		if json.Unmarshal(payload["tools"], &tools) != nil || len(tools) != 1 ||
+			tools[0]["type"] != "web_search" || tools[0]["external_web_access"] != false {
+			t.Error("ChatGPT did not receive the selected Web Search mode")
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		io.WriteString(w, "data: {\"type\":\"response.completed\"}\n\n")
 	}))
@@ -85,7 +90,8 @@ func TestChatGPTAuthorizedRoutesKeepCredentialsSeparate(t *testing.T) {
 	if r := send("/responses", `{"model":"deepseek-fixture","input":"test"}`); r.Code != http.StatusOK {
 		t.Fatal("the gateway model should still work")
 	}
-	if r := send("/responses", `{"model":"chatgpt/gpt-6.1-sol","input":"test","metadata":{}}`); r.Code != http.StatusOK ||
+	if r := send("/responses", `{"model":"chatgpt/gpt-6.1-sol","input":"test","metadata":{},
+		"tools":[{"type":"web_search","external_web_access":false},{"type":"file_search"}]}`); r.Code != http.StatusOK ||
 		!strings.Contains(r.Body.String(), "response.completed") {
 		t.Fatal("the ChatGPT model should stream to completion")
 	}

@@ -27,6 +27,8 @@
 
 开启 GPT 排除后，也可以勾选 **同时登录ChatGPT账户**。首次使用时，在浏览器授权同一个 ChatGPT 账号。隔离实例的菜单会标记使用 ChatGPT 套餐的模型，网关模型继续使用 Base URL 和 API Key。官方账号连接使用独立保存的授权。未加前缀的 GPT 请求仍会被拦截。套餐模型受账号资格及当前预览接口能力限制。 [Sign in with ChatGPT](https://developers.openai.com/siwc/token-sharing-open-source) · [预览限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)
 
+套餐模型支持 Codex 的 Web Search，沿用隔离实例的搜索设置。搜索权限取决于模型、账号和工作区策略。 [Web Search](https://developers.openai.com/api/docs/guides/tools-web-search)
+
 ## 模型列表与本地覆盖
 
 启动器支持 OpenAI 模型列表的 `data[].id`，也兼容 Codex `models[]` 目录。网关可在模型条目上附带以下可选扩展字段。 [OpenAI Models API](https://developers.openai.com/api/reference/resources/models/methods/list)

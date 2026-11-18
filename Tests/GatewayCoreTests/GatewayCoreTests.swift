@@ -213,14 +213,17 @@ struct GatewayCoreTests {
 
     func testChatGPTModelsAreDistinctFromGatewayModels() throws {
         let response = Data(#"{"data":[{"id":"gpt-6-luna"},{"id":"deepseek-v4"},{"id":"chatgpt/duplicate"}]}"#.utf8)
-        let account = Data(#"{"models":[{"slug":"chatgpt/gpt-6.1-sol","display_name":"GPT-6.1 · ChatGPT","visibility":"list","context_window":272000,"max_context_window":1050000,"auto_compact_token_limit":240000,"effective_context_window_percent":95}]}"#.utf8)
-        let result = try ModelCatalog.make(gatewayResponse: response, bundledCatalog: { nil }, excludeGPT: true,
+        let account = Data(#"{"models":[{"slug":"chatgpt/gpt-6.1-sol","display_name":"GPT-6.1 · ChatGPT","visibility":"list","context_window":272000,"max_context_window":1050000,"auto_compact_token_limit":240000,"effective_context_window_percent":95,"use_responses_lite":true}]}"#.utf8)
+        let bundled = Data(#"{"models":[{"slug":"deepseek-v4","visibility":"list","supported_in_api":true,"use_responses_lite":true}]}"#.utf8)
+        let result = try ModelCatalog.make(gatewayResponse: response, bundledCatalog: { bundled }, excludeGPT: true,
                                            chatGPTCatalog: account, contextWindow: 128_000)
         let catalog = try unwrap(JSONSerialization.jsonObject(with: result) as? [String: [[String: Any]]])
         let models = try unwrap(catalog["models"])
         assertEqual(models.compactMap { $0["slug"] as? String }, ["deepseek-v4", "chatgpt/gpt-6.1-sol"])
         assertEqual(models.last?["display_name"] as? String, "GPT-6.1 · ChatGPT")
         assertEqual(models.first?["context_window"] as? Int, 128_000)
+        assertEqual(models.first?["use_responses_lite"] as? Bool, true)
+        assertEqual(models.last?["use_responses_lite"] as? Bool, false)
         assertEqual(models.last?["context_window"] as? Int, 272_000)
         assertEqual(models.last?["max_context_window"] as? Int, 1_050_000)
         assertEqual(models.last?["auto_compact_token_limit"] as? Int, 240_000)

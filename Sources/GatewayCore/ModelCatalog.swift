@@ -105,6 +105,8 @@ public enum ModelCatalog {
                       (model["visibility"] as? String) == "list", seen.insert(id).inserted else { continue }
                 model["priority"] = nextPriority
                 model["supported_in_api"] = true
+                // Codex omits hosted Web Search from Responses Lite requests.
+                model["use_responses_lite"] = false
                 models.append(model)
                 if nextPriority < Int(Int32.max) { nextPriority += 1 }
             }
