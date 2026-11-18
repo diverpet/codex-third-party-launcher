@@ -15,8 +15,8 @@ fi
 
 CODEX_LAUNCHER_VERSION="$version" CODEX_LAUNCHER_ARCH=arm64 "$root/scripts/build.sh"
 app="$root/dist/Codex Third Party.app"
-/usr/bin/lipo -verify_arch arm64 "$app/Contents/MacOS/Launcher"
-/usr/bin/lipo -verify_arch arm64 "$app/Contents/MacOS/GatewayProxy"
+/usr/bin/lipo "$app/Contents/MacOS/Launcher" -verify_arch arm64
+/usr/bin/lipo "$app/Contents/MacOS/GatewayProxy" -verify_arch arm64
 
 staging=$(/usr/bin/mktemp -d)
 trap '/bin/rm -rf -- "$staging"' EXIT
