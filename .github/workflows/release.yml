@@ -1,0 +1,85 @@
+name: macOS Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 35
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.26.x'
+          cache: false
+      - run: go test ./...
+        working-directory: Proxy
+      - run: swift run GatewayChecks
+      - name: Build, sign and notarize the installer
+        env:
+          CODEX_APPLICATION_SIGN_IDENTITY: ${{ vars.APPLE_DEVELOPER_ID_APPLICATION }}
+          CODEX_INSTALLER_SIGN_IDENTITY: ${{ vars.APPLE_DEVELOPER_ID_INSTALLER }}
+          DEVELOPER_ID_P12: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          NOTARY_P8: ${{ secrets.APPLE_NOTARY_API_KEY_P8_BASE64 }}
+          NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          : "${CODEX_APPLICATION_SIGN_IDENTITY:?Set APPLE_DEVELOPER_ID_APPLICATION}"
+          : "${CODEX_INSTALLER_SIGN_IDENTITY:?Set APPLE_DEVELOPER_ID_INSTALLER}"
+          : "${DEVELOPER_ID_P12:?Set APPLE_DEVELOPER_ID_P12_BASE64}"
+          : "${DEVELOPER_ID_P12_PASSWORD:?Set APPLE_DEVELOPER_ID_P12_PASSWORD}"
+          : "${NOTARY_P8:?Set APPLE_NOTARY_API_KEY_P8_BASE64}"
+          : "${NOTARY_KEY_ID:?Set APPLE_NOTARY_KEY_ID}"
+          : "${NOTARY_ISSUER_ID:?Set APPLE_NOTARY_ISSUER_ID}"
+
+          umask 077
+          credentials=$(mktemp -d "$RUNNER_TEMP/codex-signing.XXXXXX")
+          keychain="$credentials/signing.keychain-db"
+          trap 'security delete-keychain "$keychain" >/dev/null 2>&1 || true; rm -rf -- "$credentials"' EXIT
+          password=$(openssl rand -hex 24)
+          printf '%s\n' "$DEVELOPER_ID_P12" | base64 -D -o "$credentials/DeveloperID.p12"
+          printf '%s\n' "$NOTARY_P8" | base64 -D -o "$credentials/AuthKey.p8"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$credentials/DeveloperID.p12" -k "$keychain" -P "$DEVELOPER_ID_P12_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/productbuild
+          security list-keychains -d user -s "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain"
+          unset DEVELOPER_ID_P12 DEVELOPER_ID_P12_PASSWORD NOTARY_P8
+          umask 022
+
+          version="${GITHUB_REF_NAME#v}"
+          ./scripts/package.sh "$version"
+          package="Codex-Third-Party-${version}-arm64.pkg"
+          xcrun notarytool submit "dist/$package" --key "$credentials/AuthKey.p8" \
+            --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" --wait
+          xcrun stapler staple "dist/$package"
+          xcrun stapler validate "dist/$package"
+          pkgutil --check-signature "dist/$package"
+          spctl --assess --type install --verbose "dist/$package"
+          (cd dist && shasum -a 256 "$package" > "$package.sha256")
+      - name: Publish to GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          package="dist/Codex-Third-Party-${version}-arm64.pkg"
+          gh release create "$GITHUB_REF_NAME" "$package" "$package.sha256" \
+            --verify-tag --generate-notes --title "Codex Third Party $version"

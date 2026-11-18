@@ -4,25 +4,25 @@
 
 ## 安装
 
-需要 macOS 14 或更新版本、Xcode Command Line Tools（Swift 5.10 或更新版本）及已安装的官方 ChatGPT 桌面应用。
+发布包支持 Apple Silicon 和 macOS 14 或更新版本。
 
-```sh
-git clone https://github.com/diverpet/codex-third-party-launcher.git
-cd codex-third-party-launcher
-./scripts/install.sh
-```
+1. 从 GitHub Releases 下载 `Codex-Third-Party-<版本>-arm64.pkg`，双击并安装到当前用户。 [GitHub Releases](https://github.com/diverpet/codex-third-party-launcher/releases)
+2. 在 Finder 打开 `~/Applications/Codex Third Party.app`。首次运行会检查本机安装的官方 ChatGPT.app，校验 OpenAI 签名，再复制到 `~/Applications/.codex-thirdparty/`。
+3. 如果 Mac 尚未安装带 Codex 的官方 ChatGPT，启动器会提供下载入口。安装官方 App 后重新打开启动器即可。 [下载 ChatGPT](https://chatgpt.com/download/)
 
-默认读取 `/Applications/ChatGPT.app`。如果官方应用在别的位置，把应用路径作为安装脚本的第一个参数。安装器把官方签名的应用复制到 `~/Applications/.codex-thirdparty/`，并在 `~/Applications` 放置 **Codex Third Party.app**。更新启动器前，请先退出旧启动器，再将旧启动器 `.app` 移到其他位置。
+以后从 **Codex Third Party.app** 打开隔离实例，从原来的 **ChatGPT.app** 打开官方账号。安装新版本的启动器前先退出启动器和隔离实例。
 
 ## 使用
 
 1. 在 Finder 打开 `~/Applications/Codex Third Party.app`。
 2. 填写网关的完整 Base URL 和 API key。两个输入框默认留空。远程网关使用 HTTPS，本机回环网关也可使用 HTTP。
-3. 点 **Load Models and Launch**，在第二个 Codex 实例里选择模型。切换网关前先退出这个实例，再打开启动器。
+3. 如需阻止 GPT 系列消耗网关额度，勾选 **排除 GPT 系列模型（推荐）**，再点 **Load Models and Launch**。切换网关或过滤设置前，先退出隔离实例，再打开启动器。
 
 网关至少需要支持 `GET /models` 与 `POST /responses`（相对 Base URL），并接受 Bearer token。密钥只在本次启动时传给子进程，不会由启动器写入文件。每个 Base URL 使用独立的 Codex 数据目录和桌面状态，原官方实例可以照常使用。启动器默认将用户主目录标为不加载项目配置，避免官方 `~/.codex/config.toml` 被第三方实例当作项目配置。实际项目目录可按需单独信任。 [网关兼容性](https://learn.chatgpt.com/docs/enterprise/gateway-compatibility)
 
 原生 Computer Use 仍由 Codex Desktop 管理。它需要本机的屏幕录制和辅助功能权限，以及能处理截图和工具调用的模型、兼容的网关。 [Computer Use 设置](https://learn.chatgpt.com/docs/computer-use)
+
+勾选 GPT 排除时，菜单隐藏 GPT 模型，隔离 Codex 改用当前会话的本机 HTTP 代理。代理只监听回环地址。它在转发前检查 Responses 请求的模型 ID，拦截 `gpt-6-luna`、`openai/gpt-6-luna` 等名称，同时保留其他模型的流式响应。适用范围是这次启动配置的网关。隐藏真实模型名称的网关别名仍按请求中的 ID 判断。
 
 ## 模型列表与本地覆盖
 
@@ -49,11 +49,30 @@ cd codex-third-party-launcher
 
 ## 构建与验证
 
+从源码构建需要 macOS 14 或更新版本、Xcode Command Line Tools（Swift 5.10 或更新版本）和 Go 1.26 或更新版本。
+
 ```sh
 swift run GatewayChecks
-./scripts/build.sh
+(cd Proxy && go test ./...)
+./scripts/package.sh 1.1.0
 ```
 
-如果本机 Swift 的默认构建引擎报错，可执行 `swift run --build-system native GatewayChecks` 和 `SWIFT_BUILD_SYSTEM=native ./scripts/build.sh`。
+本地命令默认生成未签名的测试安装包 `dist/Codex-Third-Party-1.1.0-arm64.pkg`。仅需要应用包时执行 `./scripts/build.sh`。也可以用 `./scripts/install.sh [官方 ChatGPT.app 路径]` 从源码安装。
 
-构建产物是 `dist/Codex Third Party.app`。仓库只包含启动器源代码，官方 ChatGPT Desktop 由用户在本机安装。
+验证本机官方 App 的签名、首次复制和重复运行时，可以执行 `CODEX_TEST_OFFICIAL_APP=/Applications/ChatGPT.app swift run GatewayChecks`。测试使用临时目录。
+
+## 发布
+
+在 GitHub 仓库的 **Settings → Secrets and variables → Actions** 配置以下条目。
+
+| 类型 | 名称 | 内容 |
+| --- | --- | --- |
+| Variable | `APPLE_DEVELOPER_ID_APPLICATION` | Developer ID Application 签名身份的全名 |
+| Variable | `APPLE_DEVELOPER_ID_INSTALLER` | Developer ID Installer 签名身份的全名 |
+| Secret | `APPLE_DEVELOPER_ID_P12_BASE64` | 同时包含两个签名证书和私钥的 PKCS#12 文件，Base64 编码 |
+| Secret | `APPLE_DEVELOPER_ID_P12_PASSWORD` | PKCS#12 导出密码 |
+| Secret | `APPLE_NOTARY_API_KEY_P8_BASE64` | App Store Connect 团队 API 私钥，Base64 编码 |
+| Secret | `APPLE_NOTARY_KEY_ID` | App Store Connect API Key ID |
+| Secret | `APPLE_NOTARY_ISSUER_ID` | App Store Connect Issuer ID |
+
+推送形如 `v1.1.0` 的 tag 后，`macOS Release` 会编译和测试、签名、公证、附加票据，并把验证通过的安装包和 SHA-256 校验和发布到 GitHub Releases。

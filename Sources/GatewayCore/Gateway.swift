@@ -7,6 +7,8 @@ public enum LauncherError: LocalizedError {
     case gatewayStatus(Int)
     case missingModels
     case invalidPolicy
+    case proxyUnavailable
+    case proxyConfiguration
 
     public var errorDescription: String? {
         switch self {
@@ -20,6 +22,10 @@ public enum LauncherError: LocalizedError {
             return "The gateway did not return any usable models. Check your Base URL, key permissions, Responses API support, and local catalog filters."
         case .invalidPolicy:
             return "The model overrides file contains an invalid input modality or empty exclusion prefix."
+        case .proxyUnavailable:
+            return "The local GPT filter could not start. Reinstall the launcher and try again."
+        case .proxyConfiguration:
+            return "GPT exclusion requires the launcher-managed thirdparty provider in this profile's config.toml."
         }
     }
 }
@@ -64,11 +70,6 @@ public struct Gateway {
     }
 
     public func configuration(catalog: URL, userHome: URL) throws -> String {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = .withoutEscapingSlashes
-        func quote(_ value: String) throws -> String {
-            String(decoding: try encoder.encode(value), as: UTF8.self)
-        }
         return """
         model_provider = "thirdparty"
         model_catalog_json = \(try quote(catalog.path))
@@ -86,5 +87,42 @@ public struct Gateway {
         trust_level = "untrusted"
 
         """
+    }
+
+    public static let gptModelPattern = "(?i)(^|/)(gpt|chatgpt)([-_.0-9][^/]*)?$"
+
+    public static func isGPTModel(_ id: String) -> Bool {
+        id.trimmingCharacters(in: .whitespacesAndNewlines).range(of: gptModelPattern, options: .regularExpression) != nil
+    }
+
+    public func configuration(_ existing: String, forLocalProxy proxyURL: URL) throws -> String {
+        let lines = existing.components(separatedBy: .newlines)
+        let root = lines.prefix(while: { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("[") })
+        let section = "[model_providers.thirdparty]"
+        guard root.contains(#"model_provider = "thirdparty""#),
+              let start = lines.firstIndex(of: section) else { throw LauncherError.proxyConfiguration }
+        let end = lines[(start + 1)...].firstIndex(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("[") }) ?? lines.endIndex
+        let provider = lines[(start + 1)..<end]
+        let remoteLine = "base_url = \(try quote(baseURL.absoluteString))"
+        guard provider.contains(#"env_key = "CODEX_GATEWAY_API_KEY""#),
+              provider.contains(#"wire_api = "responses""#),
+              let base = provider.firstIndex(of: remoteLine) else { throw LauncherError.proxyConfiguration }
+        var updated = lines
+        let proxyLine = "base_url = \(try quote(proxyURL.absoluteString))"
+        updated[base] = proxyLine
+        if let websockets = provider.firstIndex(where: {
+            $0.range(of: #"^\s*supports_websockets\s*="#, options: .regularExpression) != nil
+        }) {
+            updated[websockets] = "supports_websockets = false"
+        } else {
+            updated.insert("supports_websockets = false", at: base + 1)
+        }
+        return updated.joined(separator: "\n")
+    }
+
+    private func quote(_ value: String) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .withoutEscapingSlashes
+        return String(decoding: try encoder.encode(value), as: UTF8.self)
     }
 }

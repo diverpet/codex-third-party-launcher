@@ -23,7 +23,7 @@ public struct ModelOverrides: Decodable {
 
 public enum ModelCatalog {
     public static func make(
-        gatewayResponse: Data, bundledCatalog: () -> Data?, overrides: ModelOverrides = .init()
+        gatewayResponse: Data, bundledCatalog: () -> Data?, overrides: ModelOverrides = .init(), excludeGPT: Bool = false
     ) throws -> Data {
         let response = try JSONSerialization.jsonObject(with: gatewayResponse) as? [String: Any]
         let entries: [[String: Any]]
@@ -49,6 +49,7 @@ public enum ModelCatalog {
         let models = entries.compactMap { entry -> [String: Any]? in
             guard let id = entry["slug"] as? String, !id.isEmpty,
                   id.rangeOfCharacter(from: .controlCharacters) == nil,
+                  !(excludeGPT && Gateway.isGPTModel(id)),
                   !overrides.excludePrefixes.contains(where: { id.hasPrefix($0) }),
                   seen.insert(id).inserted else { return nil }
             var model = entry

@@ -7,7 +7,8 @@ let package = Package(
     products: [.executable(name: "Launcher", targets: ["Launcher"])],
     targets: [
         .target(name: "GatewayCore"),
-        .executableTarget(name: "Launcher", dependencies: ["GatewayCore"]),
-        .executableTarget(name: "GatewayChecks", dependencies: ["GatewayCore"], path: "Tests/GatewayCoreTests"),
+        .target(name: "DesktopInstallation"),
+        .executableTarget(name: "Launcher", dependencies: ["GatewayCore", "DesktopInstallation"]),
+        .executableTarget(name: "GatewayChecks", dependencies: ["GatewayCore", "DesktopInstallation"], path: "Tests/GatewayCoreTests"),
     ]
 )

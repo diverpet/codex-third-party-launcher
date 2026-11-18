@@ -1,4 +1,5 @@
 import Foundation
+import DesktopInstallation
 import GatewayCore
 
 @main
@@ -8,9 +9,15 @@ struct GatewayCoreTests {
         try tests.testGatewayNormalizationAndKeyHandling()
         try tests.testCatalogIDsAndImageClassification()
         try tests.testCatalogFiltersOnlyExplicitNonResponsesModels()
+        try tests.testGPTExclusionUsesSameModelIDsAsProxy()
         try tests.testNativeCatalogDoesNotLoadBundledDefaults()
         try tests.testHomeFolderDoesNotReuseOfficialConfiguration()
-        print("All gateway checks passed.")
+        try tests.testProxyConfigurationChangesOnlyLauncherProvider()
+        try tests.testDesktopInstallerRejectsUnverifiedAppsAndManagedSymlinks()
+        if let officialApp = ProcessInfo.processInfo.environment["CODEX_TEST_OFFICIAL_APP"] {
+            try tests.testOfficialAppCopyInTemporaryDirectory(URL(fileURLWithPath: officialApp))
+        }
+        print("All launcher checks passed.")
     }
 
     func testGatewayNormalizationAndKeyHandling() throws {
@@ -95,6 +102,70 @@ struct GatewayCoreTests {
         let config = try gateway.configuration(catalog: catalog, userHome: home)
         assertTrue(config.contains("[projects.\"/Users/test\"]\ntrust_level = \"untrusted\""))
         assertTrue(config.contains("env_key = \"CODEX_GATEWAY_API_KEY\""))
+    }
+
+    func testGPTExclusionUsesSameModelIDsAsProxy() throws {
+        let response = Data("""
+            {"data":[{"id":"gpt-6-luna"},{"id":"OpenAI/GPT-6.1-terra"},{"id":"chatgpt-4o-latest"},{"id":"deepseek-v4"}]}
+            """.utf8)
+        let result = try ModelCatalog.make(gatewayResponse: response, bundledCatalog: { nil }, excludeGPT: true)
+        let catalog = try unwrap(JSONSerialization.jsonObject(with: result) as? [String: [[String: Any]]])
+        assertEqual(catalog["models"]?.compactMap { $0["slug"] as? String }, ["deepseek-v4"])
+    }
+
+    func testProxyConfigurationChangesOnlyLauncherProvider() throws {
+        let gateway = try Gateway("https://example.com/v1")
+        let original = try gateway.configuration(catalog: URL(fileURLWithPath: "/tmp/models.json"),
+                                                 userHome: URL(fileURLWithPath: "/Users/test"))
+        let proxyURL = try unwrap(URL(string: "http://127.0.0.1:23456"))
+        let configured = try gateway.configuration(original, forLocalProxy: proxyURL)
+        assertTrue(configured.contains(#"base_url = "http://127.0.0.1:23456""#))
+        assertTrue(configured.contains("supports_websockets = false"))
+        assertTrue(configured.contains(#"trust_level = "untrusted""#))
+        assertThrows(try gateway.configuration(original.replacingOccurrences(of: "base_url", with: "other_url"),
+                                               forLocalProxy: proxyURL))
+    }
+
+    func testDesktopInstallerRejectsUnverifiedAppsAndManagedSymlinks() throws {
+        let files = FileManager.default
+        let temporary = files.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try files.createDirectory(at: temporary, withIntermediateDirectories: false)
+        defer { try? files.removeItem(at: temporary) }
+
+        let source = temporary.appendingPathComponent("Unofficial.app", isDirectory: true)
+        let macOS = source.appendingPathComponent("Contents/MacOS", isDirectory: true)
+        try files.createDirectory(at: macOS, withIntermediateDirectories: true)
+        try PropertyListSerialization.data(fromPropertyList: [
+            "CFBundleIdentifier": DesktopInstallation.officialBundleID,
+            "CFBundleExecutable": "ChatGPT",
+            "CFBundlePackageType": "APPL",
+        ], format: .xml, options: 0).write(to: source.appendingPathComponent("Contents/Info.plist"))
+        try files.copyItem(at: URL(fileURLWithPath: "/usr/bin/true"), to: macOS.appendingPathComponent("ChatGPT"))
+        let destination = temporary.appendingPathComponent("Managed/ChatGPT.app", isDirectory: true)
+        let installer = DesktopInstallation(bundle: destination)
+        assertEqual(try installer.installedApplication(), nil)
+        assertThrows(try installer.install(from: source))
+        assertTrue(!files.fileExists(atPath: destination.path))
+
+        try files.createSymbolicLink(at: destination, withDestinationURL: source)
+        assertThrows(try installer.installedApplication())
+        assertThrows(try installer.install(from: source))
+        assertTrue(files.fileExists(atPath: source.path))
+    }
+
+    func testOfficialAppCopyInTemporaryDirectory(_ source: URL) throws {
+        let files = FileManager.default
+        let temporary = files.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let staging = temporary.appendingPathComponent(".installing", isDirectory: true)
+        try files.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? files.removeItem(at: temporary) }
+        let installer = DesktopInstallation(bundle: temporary.appendingPathComponent("ChatGPT.app"))
+        let installed = try installer.install(from: source)
+        assertTrue(DesktopInstallation.isOfficialApplication(source))
+        assertTrue(DesktopInstallation.isOfficialApplication(installed))
+        assertEqual(try installer.installedApplication(), installed)
+        assertEqual(try installer.install(from: source), installed)
+        assertTrue(!files.fileExists(atPath: staging.path))
     }
 }
 
