@@ -24,6 +24,10 @@ private final class Launcher: NSObject, NSApplicationDelegate {
     private let workspace = NSWorkspace.shared
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+           let icon = NSImage(contentsOf: url) {
+            NSApp.applicationIconImage = icon
+        }
         NSApp.activate(ignoringOtherApps: true)
         Task {
             do {
@@ -243,6 +247,7 @@ private final class Launcher: NSObject, NSApplicationDelegate {
 
     private func promptForGateway() -> (String, String, Bool)? {
         let alert = NSAlert()
+        alert.icon = NSApp.applicationIconImage
         alert.messageText = "Connect to a gateway"
         alert.informativeText = "Enter a Responses API Base URL and API key."
         alert.addButton(withTitle: "Load Models and Launch")
@@ -258,11 +263,7 @@ private final class Launcher: NSObject, NSApplicationDelegate {
         勾选后隐藏 GPT 模型，并拦截相关请求。
         """
         excludeGPT.setAccessibilityHelp(explanation)
-        let helpIcon = NSImageView()
-        helpIcon.image = NSImage(systemSymbolName: "info.circle", accessibilityDescription: "GPT 排除说明")
-        helpIcon.contentTintColor = .secondaryLabelColor
-        helpIcon.toolTip = explanation
-        helpIcon.setAccessibilityHelp(explanation)
+        let helpIcon = HoverHelpButton(explanation: explanation)
         let filterRow = NSStackView(views: [excludeGPT, helpIcon])
         filterRow.orientation = .horizontal
         filterRow.alignment = .centerY
@@ -286,7 +287,10 @@ private final class Launcher: NSObject, NSApplicationDelegate {
             editor.paste(nil)
             return nil
         }
-        defer { if let pasteShortcut { NSEvent.removeMonitor(pasteShortcut) } }
+        defer {
+            helpIcon.dismiss()
+            if let pasteShortcut { NSEvent.removeMonitor(pasteShortcut) }
+        }
         guard alert.runModal() == .alertFirstButtonReturn else { return nil }
         return (address.stringValue, key.stringValue, excludeGPT.state == .on)
     }

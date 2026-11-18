@@ -14,8 +14,9 @@ swift build "$@" --configuration release --product Launcher
 bin=$(swift build "$@" --configuration release --show-bin-path)
 app="$root/dist/Codex Third Party.app"
 
-/bin/mkdir -p "$app/Contents/MacOS"
+/bin/mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 /bin/cp "$root/Resources/Info.plist" "$app/Contents/Info.plist"
+/bin/cp "$root/Resources/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
 if [[ -n "${CODEX_LAUNCHER_VERSION:-}" ]]; then
   /usr/bin/plutil -replace CFBundleShortVersionString -string "$CODEX_LAUNCHER_VERSION" "$app/Contents/Info.plist"
   /usr/bin/plutil -replace CFBundleVersion -string "$CODEX_LAUNCHER_VERSION" "$app/Contents/Info.plist"

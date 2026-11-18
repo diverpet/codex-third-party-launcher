@@ -29,4 +29,5 @@ jobs:
           pkgutil --expand-full "$pkg" "$RUNNER_TEMP/codex-package"
           app="$RUNNER_TEMP/codex-package/Launcher.pkg/Payload/Codex Third Party.app"
           test "$(find "$(dirname "$app")" -maxdepth 1 -name '*.app' | wc -l | tr -d ' ')" = 1
+          test -s "$app/Contents/Resources/AppIcon.icns"
           codesign --verify --deep --strict "$app"
