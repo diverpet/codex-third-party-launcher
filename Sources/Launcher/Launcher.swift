@@ -305,7 +305,7 @@ private final class Launcher: NSObject, NSApplicationDelegate {
         context.placeholderString = "最大上下文（选填，默认 \(Gateway.defaultContextWindow / 1_000)K）"
         context.setAccessibilityLabel("最大上下文")
         let excludeGPT = NSButton(checkboxWithTitle: "排除 GPT 系列模型（推荐）", target: self, action: #selector(updateChatGPTOption(_:)))
-        let includeChatGPT = NSButton(checkboxWithTitle: "把 ChatGPT 账号的模型加入隔离实例", target: nil, action: nil)
+        let includeChatGPT = NSButton(checkboxWithTitle: "同时登录ChatGPT账户", target: nil, action: nil)
         includeChatGPT.isEnabled = false
         includeChatGPT.setAccessibilityHelp("开启 GPT 排除后可选。首次使用时在浏览器授权当前账号。")
         chatGPTCheckbox = includeChatGPT

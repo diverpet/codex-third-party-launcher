@@ -25,7 +25,7 @@
 
 勾选 GPT 排除时，菜单隐藏 GPT 模型，隔离 Codex 改用当前会话的本机 HTTP 代理。代理只监听回环地址。它在转发前检查 Responses 请求的模型 ID，拦截 `gpt-6-luna`、`openai/gpt-6-luna` 等名称，同时保留其他模型的流式响应。适用范围是这次启动配置的网关。隐藏真实模型名称的网关别名仍按请求中的 ID 判断。
 
-开启 GPT 排除后，也可以勾选 **把 ChatGPT 账号的模型加入隔离实例**。首次使用时，在浏览器授权同一个 ChatGPT 账号。隔离实例的菜单会标记使用 ChatGPT 套餐的模型，网关模型继续使用 Base URL 和 API Key。官方账号连接使用独立保存的授权。未加前缀的 GPT 请求仍会被拦截。套餐模型受账号资格及当前预览接口能力限制。 [Sign in with ChatGPT](https://developers.openai.com/siwc/token-sharing-open-source) · [预览限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)
+开启 GPT 排除后，也可以勾选 **同时登录ChatGPT账户**。首次使用时，在浏览器授权同一个 ChatGPT 账号。隔离实例的菜单会标记使用 ChatGPT 套餐的模型，网关模型继续使用 Base URL 和 API Key。官方账号连接使用独立保存的授权。未加前缀的 GPT 请求仍会被拦截。套餐模型受账号资格及当前预览接口能力限制。 [Sign in with ChatGPT](https://developers.openai.com/siwc/token-sharing-open-source) · [预览限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)
 
 ## 模型列表与本地覆盖
 
