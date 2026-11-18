@@ -254,8 +254,8 @@ private final class Launcher: NSObject, NSApplicationDelegate {
         key.placeholderString = "API key (this launch only)"
         let excludeGPT = NSButton(checkboxWithTitle: "排除 GPT 系列模型（推荐）", target: nil, action: nil)
         let explanation = """
-        Codex Desktop 可能在后台调用 GPT 系列模型（例如 gpt-6-luna），产生额外用量。
-        勾选后，Launcher 会在菜单中隐藏这些模型，并在本机拦截发往当前网关的 GPT 系列请求。
+        Codex Desktop 可能在后台调用 GPT 模型，产生额外用量。
+        勾选后隐藏 GPT 模型，并拦截相关请求。
         """
         excludeGPT.setAccessibilityHelp(explanation)
         let helpIcon = NSImageView()
