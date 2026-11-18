@@ -120,6 +120,56 @@ public struct Gateway {
         return updated.joined(separator: "\n")
     }
 
+    public static func restoreProxyConfiguration(current: String, original: String, active: String) throws -> String {
+        if current == active { return original }
+        if current == original { return current }
+
+        // Codex writes preferences to this file during a session. Restore only the
+        // two provider settings changed by the launcher and keep the other edits.
+        var currentLines = current.components(separatedBy: "\n")
+        let originalLines = original.components(separatedBy: "\n")
+        let activeLines = active.components(separatedBy: "\n")
+        var replacements: [(Int, String?)] = []
+        for key in ["base_url", "supports_websockets"] {
+            let before = try providerSetting(key, in: originalLines)
+            guard let temporary = try providerSetting(key, in: activeLines) else {
+                throw LauncherError.proxyConfiguration
+            }
+            let actual = try providerSetting(key, in: currentLines)
+            if actual?.value == before?.value { continue }
+            guard let actual, actual.value == temporary.value else { throw LauncherError.proxyConfiguration }
+            replacements.append((actual.index, before.map { originalLines[$0.index] }))
+        }
+        for (index, replacement) in replacements.sorted(by: { $0.0 > $1.0 }) {
+            if let replacement { currentLines[index] = replacement }
+            else { currentLines.remove(at: index) }
+        }
+        return currentLines.joined(separator: "\n")
+    }
+
+    private static func providerSetting(_ key: String, in lines: [String]) throws -> (index: Int, value: String)? {
+        let table = "[model_providers.thirdparty]"
+        let sections = lines.indices.filter {
+            lines[$0].trimmingCharacters(in: .whitespacesAndNewlines) == table
+        }
+        guard sections.count == 1, let start = sections.first else { throw LauncherError.proxyConfiguration }
+        let assignment = try NSRegularExpression(pattern: "^\\s*" + key + #"[ \t]*=[ \t]*("(?:[^"\\]|\\.)*"|true|false)[ \t]*(?:#.*)?\s*$"#)
+        let prefix = "^\\s*" + key + #"\s*="#
+        let indices = lines.indices.dropFirst(start + 1).prefix {
+            !lines[$0].trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("[")
+        }.filter { lines[$0].range(of: prefix, options: .regularExpression) != nil }
+        guard let index = indices.first else { return nil }
+        let line = lines[index]
+        guard indices.count == 1,
+              let match = assignment.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
+              let range = Range(match.range(at: 1), in: line) else { throw LauncherError.proxyConfiguration }
+        let value = String(line[range])
+        if value.hasPrefix("\"") {
+            return (index, try JSONDecoder().decode(String.self, from: Data(value.utf8)))
+        }
+        return (index, value)
+    }
+
     private func quote(_ value: String) throws -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .withoutEscapingSlashes

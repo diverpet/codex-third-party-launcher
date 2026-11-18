@@ -13,6 +13,7 @@ struct GatewayCoreTests {
         try tests.testNativeCatalogDoesNotLoadBundledDefaults()
         try tests.testHomeFolderDoesNotReuseOfficialConfiguration()
         try tests.testProxyConfigurationChangesOnlyLauncherProvider()
+        try tests.testProxyRecoveryPreservesDesktopEdits()
         try tests.testDesktopInstallerRejectsUnverifiedAppsAndManagedSymlinks()
         if let officialApp = ProcessInfo.processInfo.environment["CODEX_TEST_OFFICIAL_APP"] {
             try tests.testOfficialAppCopyInTemporaryDirectory(URL(fileURLWithPath: officialApp))
@@ -124,6 +125,21 @@ struct GatewayCoreTests {
         assertTrue(configured.contains(#"trust_level = "untrusted""#))
         assertThrows(try gateway.configuration(original.replacingOccurrences(of: "base_url", with: "other_url"),
                                                forLocalProxy: proxyURL))
+    }
+
+    func testProxyRecoveryPreservesDesktopEdits() throws {
+        let gateway = try Gateway("https://example.com/v1")
+        let original = try gateway.configuration(catalog: URL(fileURLWithPath: "/tmp/models.json"),
+                                                 userHome: URL(fileURLWithPath: "/Users/test"))
+        let active = try gateway.configuration(original, forLocalProxy: URL(string: "http://127.0.0.1:23456")!)
+        let additions = "model = \"deepseek-v4\"\n"
+        let preferences = "\n[desktop]\nconversationDetailMode = \"expanded\"\n"
+        let current = additions + active.replacingOccurrences(of: "supports_websockets = false", with: "supports_websockets=false # session") + preferences
+        assertEqual(try Gateway.restoreProxyConfiguration(current: current, original: original, active: active),
+                    additions + original + preferences)
+        assertThrows(try Gateway.restoreProxyConfiguration(
+            current: current.replacingOccurrences(of: "127.0.0.1:23456", with: "127.0.0.1:12345"),
+            original: original, active: active))
     }
 
     func testDesktopInstallerRejectsUnverifiedAppsAndManagedSymlinks() throws {

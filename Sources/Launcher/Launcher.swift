@@ -150,13 +150,19 @@ private final class Launcher: NSObject, NSApplicationDelegate {
         guard files.fileExists(atPath: backup.path) else { return }
         let state = try JSONDecoder().decode(ProxyConfiguration.self, from: Data(contentsOf: backup))
         let current = try Data(contentsOf: config)
-        if current == state.active {
-            try writePrivate(state.original, to: config)
-        } else if current != state.original {
+        let restored: Data
+        do {
+            restored = Data(try Gateway.restoreProxyConfiguration(
+                current: String(decoding: current, as: UTF8.self),
+                original: String(decoding: state.original, as: UTF8.self),
+                active: String(decoding: state.active, as: UTF8.self)
+            ).utf8)
+        } catch {
             throw CocoaError(.fileWriteUnknown, userInfo: [
                 NSLocalizedDescriptionKey: "The profile configuration changed while GPT exclusion was active. Review config.toml and local-proxy-configuration.json in \(config.deletingLastPathComponent().path) before retrying."
             ])
         }
+        if restored != current { try writePrivate(restored, to: config) }
         try files.removeItem(at: backup)
     }
 
