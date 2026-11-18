@@ -17,7 +17,7 @@ public enum LauncherError: LocalizedError {
         case .gatewayStatus(let status):
             return "The gateway returned HTTP \(status) from /models."
         case .missingModels:
-            return "The gateway did not return any usable models. Check your Base URL, key permissions, and local catalog filters."
+            return "The gateway did not return any usable models. Check your Base URL, key permissions, Responses API support, and local catalog filters."
         case .invalidPolicy:
             return "The model overrides file contains an invalid input modality or empty exclusion prefix."
         }

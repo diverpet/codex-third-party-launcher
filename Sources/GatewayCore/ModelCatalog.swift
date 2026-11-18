@@ -28,10 +28,10 @@ public enum ModelCatalog {
         let response = try JSONSerialization.jsonObject(with: gatewayResponse) as? [String: Any]
         let entries: [[String: Any]]
         if let native = response?["models"] as? [[String: Any]] {
-            entries = native
+            entries = native.filter(supportsResponses)
         } else if let standard = response?["data"] as? [[String: Any]] {
             let defaults = bundledModels(bundledCatalog())
-            entries = standard.sorted {
+            entries = standard.filter(supportsResponses).sorted {
                 ($0["id"] as? String ?? "") < ($1["id"] as? String ?? "")
             }.enumerated().compactMap { index, entry in
                 guard let id = entry["id"] as? String else { return nil }
@@ -61,6 +61,12 @@ public enum ModelCatalog {
         guard models.contains(where: { ($0["visibility"] as? String) == "list" })
         else { throw LauncherError.missingModels }
         return try JSONSerialization.data(withJSONObject: ["models": models], options: [.prettyPrinted, .sortedKeys])
+    }
+
+    private static func supportsResponses(_ entry: [String: Any]) -> Bool {
+        // The OpenAI Models API does not require capability metadata.
+        guard let supported = entry["supported_apis"] as? [String] else { return true }
+        return supported.contains("responses")
     }
 
     private static func bundledModels(_ data: Data?) -> [String: [String: Any]] {

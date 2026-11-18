@@ -26,7 +26,12 @@ cd codex-third-party-launcher
 
 ## 模型列表与本地覆盖
 
-启动器支持普通的 `data[].id` 模型列表，以及附带详细模态信息的 Codex `models[]` 目录。没有模态信息的模型会尝试匹配 Codex 内置目录，否则默认只声明文本输入。菜单始终显示实际请求使用的 model code。
+启动器支持 OpenAI 模型列表的 `data[].id`，也兼容 Codex `models[]` 目录。网关可在模型条目上附带以下可选扩展字段。 [OpenAI Models API](https://developers.openai.com/api/reference/resources/models/methods/list)
+
+- `supported_apis` 为字符串数组时，只有包含 `"responses"` 的模型会显示在菜单。字段缺省或为 `null` 时保留模型。
+- `input_modalities` 可声明 `["text"]` 或 `["text","image"]`。普通模型列表缺少该字段时，启动器按模型 ID 查找 Codex 内置目录，找不到时默认使用文本输入。
+
+菜单显示实际请求使用的 model code。
 
 如需隐藏某些前缀或为网关缺少元数据的模型声明图片输入，第一次启动后，在对应的 `~/.codex-thirdparty/gateways/<profile-id>/` 目录创建 `model-overrides.json`，然后重启第三方实例。可以通过该目录 `config.toml` 中的 `base_url` 找到对应的网关。
 

@@ -7,9 +7,10 @@ struct GatewayCoreTests {
         let tests = Self()
         try tests.testGatewayNormalizationAndKeyHandling()
         try tests.testCatalogIDsAndImageClassification()
+        try tests.testCatalogFiltersOnlyExplicitNonResponsesModels()
         try tests.testNativeCatalogDoesNotLoadBundledDefaults()
         try tests.testHomeFolderDoesNotReuseOfficialConfiguration()
-        print("All four gateway checks passed.")
+        print("All gateway checks passed.")
     }
 
     func testGatewayNormalizationAndKeyHandling() throws {
@@ -53,15 +54,38 @@ struct GatewayCoreTests {
 
     func testNativeCatalogDoesNotLoadBundledDefaults() throws {
         let raw = Data("""
-            {"models":[{"slug":"test","visibility":"list","display_name":"Alternate","input_modalities":["text"],"priority":17}]}
+            {"models":[{"slug":"test","visibility":"list","display_name":"Alternate","input_modalities":["text"],"priority":17},
+                       {"slug":"chat","visibility":"list","supported_apis":["chat.completions"]}]}
             """.utf8)
         let result = try ModelCatalog.make(gatewayResponse: raw, bundledCatalog: {
             fatalError("Native catalog should not invoke the bundled CLI")
         })
         let catalog = try unwrap(JSONSerialization.jsonObject(with: result) as? [String: [[String: Any]]])
+        assertEqual(catalog["models"]?.count, 1)
         let model = try unwrap(catalog["models"]?.first)
         assertEqual(model["display_name"] as? String, "test")
         assertEqual(model["priority"] as? Int, 17)
+    }
+
+    func testCatalogFiltersOnlyExplicitNonResponsesModels() throws {
+        let raw = Data("""
+            {"object":"list","data":[
+                {"id":"chat","supported_apis":["chat.completions"]},
+                {"id":"empty","supported_apis":[]},
+                {"id":"legacy"},
+                {"id":"null","supported_apis":null},
+                {"id":"vision","supported_apis":["chat.completions","responses"],"input_modalities":["text","image"]}
+            ]}
+            """.utf8)
+        let result = try ModelCatalog.make(gatewayResponse: raw, bundledCatalog: { nil })
+        let catalog = try unwrap(JSONSerialization.jsonObject(with: result) as? [String: [[String: Any]]])
+        let models = try unwrap(catalog["models"])
+        assertEqual(models.compactMap { $0["slug"] as? String }, ["legacy", "null", "vision"])
+        assertEqual(models.last?["input_modalities"] as? [String], ["text", "image"])
+        let chatOnly = Data("""
+            {"data":[{"id":"chat","supported_apis":["chat.completions"]}]}
+            """.utf8)
+        assertThrows(try ModelCatalog.make(gatewayResponse: chatOnly, bundledCatalog: { nil }))
     }
 
     func testHomeFolderDoesNotReuseOfficialConfiguration() throws {
