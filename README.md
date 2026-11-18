@@ -16,7 +16,8 @@
 
 1. 在 Finder 打开 `~/Applications/Codex Third Party.app`。
 2. 填写网关的完整 Base URL 和 API key。两个输入框默认留空。远程网关使用 HTTPS，本机回环网关也可使用 HTTP。
-3. 如需阻止 GPT 系列消耗网关额度，勾选 **排除 GPT 系列模型（推荐）**，再点 **Load Models and Launch**。切换网关或过滤设置前，先退出隔离实例，再打开启动器。
+3. **最大上下文** 可留空，默认给本次启动的所有网关模型设置 270,000 token。也可以输入实际的上限，例如 `128000` 或 `128K`。ChatGPT 账号模型使用官方目录提供的窗口。
+4. 如需阻止 GPT 系列消耗网关额度，勾选 **排除 GPT 系列模型（推荐）**，再点 **Load Models and Launch**。切换网关或过滤设置前，先退出隔离实例，再打开启动器。
 
 网关至少需要支持 `GET /models` 与 `POST /responses`（相对 Base URL），并接受 Bearer token。密钥只在本次启动时传给子进程，不会由启动器写入文件。每个 Base URL 使用独立的 Codex 数据目录和桌面状态，原官方实例可以照常使用。启动器默认将用户主目录标为不加载项目配置，避免官方 `~/.codex/config.toml` 被第三方实例当作项目配置。实际项目目录可按需单独信任。 [网关兼容性](https://learn.chatgpt.com/docs/enterprise/gateway-compatibility)
 
@@ -32,7 +33,6 @@
 
 - `supported_apis` 为字符串数组时，只有包含 `"responses"` 的模型会显示在菜单。字段缺省或为 `null` 时保留模型。
 - `input_modalities` 可声明 `["text"]` 或 `["text","image"]`。普通模型列表缺少该字段时，启动器按模型 ID 查找 Codex 内置目录，找不到时默认使用文本输入。
-- `context_window` 和 `max_input_tokens` 可声明模型的 token 上限。启动器取可用上限中的较小值，为 Codex 的上下文用量显示和自动压缩提供窗口大小。网关和内置目录都未提供窗口时，启动器按 272,000 token 估算。
 
 菜单显示实际请求使用的 model code。
 

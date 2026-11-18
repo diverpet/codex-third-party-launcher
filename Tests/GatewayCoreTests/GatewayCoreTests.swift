@@ -8,7 +8,7 @@ struct GatewayCoreTests {
         let tests = Self()
         try tests.testGatewayNormalizationAndKeyHandling()
         try tests.testCatalogIDsAndImageClassification()
-        try tests.testCatalogUsesOptionalContextLimits()
+        try tests.testCatalogUsesLaunchContextWindow()
         try tests.testCatalogFiltersOnlyExplicitNonResponsesModels()
         try tests.testGPTExclusionUsesSameModelIDsAsProxy()
         try tests.testChatGPTModelsAreDistinctFromGatewayModels()
@@ -38,6 +38,13 @@ struct GatewayCoreTests {
         }
         assertThrows(try gateway.modelRequest(key: "foo\nbar"))
         _ = try Gateway("http://127.0.0.1:8080/v1")
+        assertEqual(try Gateway.contextWindow(""), 270_000)
+        assertEqual(try Gateway.contextWindow(" 128K "), 128_000)
+        assertEqual(try Gateway.contextWindow("64k"), 64_000)
+        assertEqual(try Gateway.contextWindow("128000"), 128_000)
+        for invalid in ["0", "-12", "12.5K", "+128K", "K", "4000000K", "2147483648"] {
+            assertThrows(try Gateway.contextWindow(invalid))
+        }
     }
 
     func testCatalogIDsAndImageClassification() throws {
@@ -75,36 +82,31 @@ struct GatewayCoreTests {
         let model = try unwrap(catalog["models"]?.first)
         assertEqual(model["display_name"] as? String, "test")
         assertEqual(model["priority"] as? Int, 17)
-        assertEqual(model["context_window"] as? Int, 272000)
+        assertEqual(model["context_window"] as? Int, 270_000)
     }
 
-    func testCatalogUsesOptionalContextLimits() throws {
+    func testCatalogUsesLaunchContextWindow() throws {
         let response = Data("""
             {"data":[
-                {"id":"window","context_window":64000},
-                {"id":"input","max_input_tokens":48000},
-                {"id":"limited","context_window":128000,"max_input_tokens":64000},
                 {"id":"known"},
-                {"id":"unknown"},
-                {"id":"invalid","context_window":true,"max_input_tokens":10.5},
-                {"id":"zero","context_window":0,"max_input_tokens":-100},
-                {"id":"out-of-range","context_window":999999999999}
+                {"id":"advertised","context_window":64000,"max_input_tokens":48000},
+                {"id":"unknown"}
             ]}
             """.utf8)
         let stock = Data("""
             {"models":[{"slug":"known","visibility":"list","supported_in_api":true,"context_window":32000}]}
             """.utf8)
-        let result = try ModelCatalog.make(gatewayResponse: response, bundledCatalog: { stock })
-        let catalog = try unwrap(JSONSerialization.jsonObject(with: result) as? [String: [[String: Any]]])
-        let models = try unwrap(catalog["models"])
-        let limits = Dictionary(uniqueKeysWithValues: models.compactMap { model -> (String, Int)? in
-            guard let id = model["slug"] as? String, let limit = model["context_window"] as? Int else { return nil }
-            return (id, limit)
-        })
-        assertEqual(limits, [
-            "window": 64000, "input": 48000, "limited": 64000, "known": 32000,
-            "unknown": 272000, "invalid": 272000, "zero": 272000, "out-of-range": 272000,
-        ])
+        for input in ["", "128K"] {
+            let window = try Gateway.contextWindow(input)
+            let result = try ModelCatalog.make(gatewayResponse: response, bundledCatalog: { stock }, contextWindow: window)
+            let catalog = try unwrap(JSONSerialization.jsonObject(with: result) as? [String: [[String: Any]]])
+            let models = try unwrap(catalog["models"])
+            assertEqual(models.count, 3)
+            for model in models {
+                assertEqual(model["context_window"] as? Int, window)
+                assertEqual(model["max_context_window"] as? Int, window)
+            }
+        }
     }
 
     func testCatalogFiltersOnlyExplicitNonResponsesModels() throws {
@@ -148,12 +150,18 @@ struct GatewayCoreTests {
 
     func testChatGPTModelsAreDistinctFromGatewayModels() throws {
         let response = Data(#"{"data":[{"id":"gpt-6-luna"},{"id":"deepseek-v4"},{"id":"chatgpt/duplicate"}]}"#.utf8)
-        let account = Data(#"{"models":[{"slug":"chatgpt/gpt-6.1-sol","display_name":"GPT-6.1 · ChatGPT","visibility":"list"}]}"#.utf8)
-        let result = try ModelCatalog.make(gatewayResponse: response, bundledCatalog: { nil }, excludeGPT: true, chatGPTCatalog: account)
+        let account = Data(#"{"models":[{"slug":"chatgpt/gpt-6.1-sol","display_name":"GPT-6.1 · ChatGPT","visibility":"list","context_window":272000,"max_context_window":1050000,"auto_compact_token_limit":240000,"effective_context_window_percent":95}]}"#.utf8)
+        let result = try ModelCatalog.make(gatewayResponse: response, bundledCatalog: { nil }, excludeGPT: true,
+                                           chatGPTCatalog: account, contextWindow: 128_000)
         let catalog = try unwrap(JSONSerialization.jsonObject(with: result) as? [String: [[String: Any]]])
         let models = try unwrap(catalog["models"])
         assertEqual(models.compactMap { $0["slug"] as? String }, ["deepseek-v4", "chatgpt/gpt-6.1-sol"])
         assertEqual(models.last?["display_name"] as? String, "GPT-6.1 · ChatGPT")
+        assertEqual(models.first?["context_window"] as? Int, 128_000)
+        assertEqual(models.last?["context_window"] as? Int, 272_000)
+        assertEqual(models.last?["max_context_window"] as? Int, 1_050_000)
+        assertEqual(models.last?["auto_compact_token_limit"] as? Int, 240_000)
+        assertEqual(models.last?["effective_context_window_percent"] as? Int, 95)
         assertThrows(try ModelCatalog.make(gatewayResponse: response, bundledCatalog: { nil }, chatGPTCatalog: account))
     }
 

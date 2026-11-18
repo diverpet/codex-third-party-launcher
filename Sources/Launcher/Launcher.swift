@@ -52,7 +52,7 @@ private final class Launcher: NSObject, NSApplicationDelegate {
             return
         }
 
-        guard let (address, secret, excludeGPT, includeChatGPT) = promptForGateway() else { return }
+        guard let (address, secret, contextWindow, excludeGPT, includeChatGPT) = promptForGateway() else { return }
         let gateway = try Gateway(address)
         let key = secret.trimmingCharacters(in: .whitespacesAndNewlines)
         let request = try gateway.modelRequest(key: key)
@@ -96,7 +96,7 @@ private final class Launcher: NSObject, NSApplicationDelegate {
         let models = try ModelCatalog.make(gatewayResponse: data,
                                            bundledCatalog: { self.bundledCatalog(cli, profile: profile) },
                                            overrides: overrides, excludeGPT: excludeGPT,
-                                           chatGPTCatalog: proxy?.chatGPTCatalog)
+                                           chatGPTCatalog: proxy?.chatGPTCatalog, contextWindow: contextWindow)
         try writePrivate(models, to: catalog)
         if !files.fileExists(atPath: config.path) {
             try writePrivate(Data(try gateway.configuration(catalog: catalog, userHome: home).utf8), to: config)
@@ -289,7 +289,7 @@ private final class Launcher: NSObject, NSApplicationDelegate {
         if !enabled { chatGPTCheckbox?.state = .off }
     }
 
-    private func promptForGateway() -> (String, String, Bool, Bool)? {
+    private func promptForGateway() -> (String, String, Int, Bool, Bool)? {
         let alert = NSAlert()
         alert.icon = NSApp.applicationIconImage
         alert.messageText = "Connect to a gateway"
@@ -301,6 +301,9 @@ private final class Launcher: NSObject, NSApplicationDelegate {
         address.placeholderString = "Base URL"
         let key = NSSecureTextField()
         key.placeholderString = "API key (this launch only)"
+        let context = NSTextField()
+        context.placeholderString = "最大上下文（选填，默认 \(Gateway.defaultContextWindow / 1_000)K）"
+        context.setAccessibilityLabel("最大上下文")
         let excludeGPT = NSButton(checkboxWithTitle: "排除 GPT 系列模型（推荐）", target: self, action: #selector(updateChatGPTOption(_:)))
         let includeChatGPT = NSButton(checkboxWithTitle: "把 ChatGPT 账号的模型加入隔离实例", target: nil, action: nil)
         includeChatGPT.isEnabled = false
@@ -316,11 +319,11 @@ private final class Launcher: NSObject, NSApplicationDelegate {
         filterRow.orientation = .horizontal
         filterRow.alignment = .centerY
         filterRow.spacing = 6
-        let stack = NSStackView(views: [address, key, filterRow, includeChatGPT])
+        let stack = NSStackView(views: [address, key, context, filterRow, includeChatGPT])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8
-        for field in [address, key] {
+        for field in [address, key, context] {
             field.widthAnchor.constraint(equalToConstant: 380).isActive = true
         }
         stack.frame = NSRect(origin: .zero, size: stack.fittingSize)
@@ -331,7 +334,8 @@ private final class Launcher: NSObject, NSApplicationDelegate {
                   event.modifierFlags.intersection([.command, .control, .option, .shift]) == .command,
                   event.charactersIgnoringModifiers?.lowercased() == "v",
                   let editor = alert.window.firstResponder as? NSTextView,
-                  editor === address.currentEditor() || editor === key.currentEditor() else { return event }
+                  editor === address.currentEditor() || editor === key.currentEditor()
+                    || editor === context.currentEditor() else { return event }
             editor.paste(nil)
             return nil
         }
@@ -340,9 +344,17 @@ private final class Launcher: NSObject, NSApplicationDelegate {
             chatGPTCheckbox = nil
             if let pasteShortcut { NSEvent.removeMonitor(pasteShortcut) }
         }
-        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
-        return (address.stringValue, key.stringValue, excludeGPT.state == .on,
-                excludeGPT.state == .on && includeChatGPT.state == .on)
+        while alert.runModal() == .alertFirstButtonReturn {
+            do {
+                let window = try Gateway.contextWindow(context.stringValue)
+                return (address.stringValue, key.stringValue, window, excludeGPT.state == .on,
+                        excludeGPT.state == .on && includeChatGPT.state == .on)
+            } catch {
+                NSAlert(error: error).runModal()
+                alert.window.initialFirstResponder = context
+            }
+        }
+        return nil
     }
 
     private func bundledCatalog(_ cli: URL?, profile: URL) -> Data? {

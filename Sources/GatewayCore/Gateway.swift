@@ -4,6 +4,7 @@ import Foundation
 public enum LauncherError: LocalizedError {
     case invalidURL
     case invalidKey
+    case invalidContextWindow
     case gatewayStatus(Int)
     case missingModels
     case invalidPolicy
@@ -17,6 +18,8 @@ public enum LauncherError: LocalizedError {
             return "Enter an HTTPS Base URL without credentials, query parameters, or a fragment. Loopback HTTP is also supported."
         case .invalidKey:
             return "Enter a valid API key."
+        case .invalidContextWindow:
+            return "最大上下文请输入正整数，例如 128000 或 128K。"
         case .gatewayStatus(let status):
             return "The gateway returned HTTP \(status) from /models."
         case .missingModels:
@@ -43,6 +46,7 @@ public enum LauncherError: LocalizedError {
 }
 
 public struct Gateway {
+    public static let defaultContextWindow = 270_000
     public let baseURL: URL
 
     public init(_ input: String) throws {
@@ -79,6 +83,20 @@ public struct Gateway {
         var request = URLRequest(url: baseURL.appendingPathComponent("models"), timeoutInterval: 15)
         request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization")
         return request
+    }
+
+    public static func contextWindow(_ input: String) throws -> Int {
+        let value = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.isEmpty { return defaultContextWindow }
+
+        let thousands = value.last == "K" || value.last == "k"
+        let digits = thousands ? String(value.dropLast()) : value
+        let multiplier = thousands ? 1_000 : 1
+        guard digits.utf8.allSatisfy({ (48...57).contains($0) }),
+              let amount = Int(digits), (1...(Int(Int32.max) / multiplier)).contains(amount) else {
+            throw LauncherError.invalidContextWindow
+        }
+        return amount * multiplier
     }
 
     public func configuration(catalog: URL, userHome: URL) throws -> String {

@@ -1,4 +1,3 @@
-import CoreFoundation
 import Foundation
 
 public struct ModelOverrides: Decodable {
@@ -23,20 +22,14 @@ public struct ModelOverrides: Decodable {
 }
 
 public enum ModelCatalog {
-    private static let fallbackContextWindow = 272_000
-
     public static func make(
         gatewayResponse: Data, bundledCatalog: () -> Data?, overrides: ModelOverrides = .init(), excludeGPT: Bool = false,
-        chatGPTCatalog: Data? = nil
+        chatGPTCatalog: Data? = nil, contextWindow: Int = Gateway.defaultContextWindow
     ) throws -> Data {
         let response = try JSONSerialization.jsonObject(with: gatewayResponse) as? [String: Any]
         let entries: [[String: Any]]
         if let native = response?["models"] as? [[String: Any]] {
-            entries = native.filter(supportsResponses).map { entry in
-                var model = entry
-                model["context_window"] = contextWindow(entry)
-                return model
-            }
+            entries = native.filter(supportsResponses)
         } else if let standard = response?["data"] as? [[String: Any]] {
             let defaults = bundledModels(bundledCatalog())
             entries = standard.filter(supportsResponses).sorted {
@@ -47,7 +40,6 @@ public enum ModelCatalog {
                 if let declared = entry["input_modalities"] as? [String] {
                     model["input_modalities"] = declared.contains("image") ? ["text", "image"] : ["text"]
                 }
-                model["context_window"] = contextWindow(entry, bundled: model)
                 return model
             }
         } else {
@@ -64,6 +56,8 @@ public enum ModelCatalog {
                   seen.insert(id).inserted else { return nil }
             var model = entry
             model["display_name"] = id
+            model["context_window"] = contextWindow
+            model["max_context_window"] = contextWindow
             if let override = overrides.inputModalities[id] {
                 model["input_modalities"] = override
             }
@@ -94,18 +88,6 @@ public enum ModelCatalog {
         // The OpenAI Models API does not require capability metadata.
         guard let supported = entry["supported_apis"] as? [String] else { return true }
         return supported.contains("responses")
-    }
-
-    private static func tokenLimit(_ value: Any?) -> Int? {
-        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
-              let limit = Int(number.stringValue), (1...Int(Int32.max)).contains(limit) else { return nil }
-        return limit
-    }
-
-    private static func contextWindow(_ entry: [String: Any], bundled: [String: Any] = [:]) -> Int {
-        let window = tokenLimit(entry["context_window"]) ?? tokenLimit(entry["max_context_window"])
-            ?? tokenLimit(bundled["context_window"]) ?? tokenLimit(bundled["max_context_window"])
-        return [window, tokenLimit(entry["max_input_tokens"])].compactMap { $0 }.min() ?? fallbackContextWindow
     }
 
     private static func bundledModels(_ data: Data?) -> [String: [String: Any]] {
