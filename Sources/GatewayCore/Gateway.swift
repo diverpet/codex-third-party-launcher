@@ -46,7 +46,7 @@ public enum LauncherError: LocalizedError {
 }
 
 public struct Gateway {
-    public static let defaultContextWindow = 270_000
+    public static let defaultContextWindow = 500_000
     public let baseURL: URL
 
     public init(_ input: String) throws {

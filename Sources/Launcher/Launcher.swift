@@ -302,7 +302,7 @@ private final class Launcher: NSObject, NSApplicationDelegate {
         let key = NSSecureTextField()
         key.placeholderString = "API key (this launch only)"
         let context = NSTextField()
-        context.placeholderString = "最大上下文（选填，默认 \(Gateway.defaultContextWindow / 1_000)K）"
+        context.placeholderString = "最大上下文（仅 API 模型，默认 \(Gateway.defaultContextWindow / 1_000)K）"
         context.setAccessibilityLabel("最大上下文")
         let excludeGPT = NSButton(checkboxWithTitle: "排除 GPT 系列模型（推荐）", target: self, action: #selector(updateChatGPTOption(_:)))
         let includeChatGPT = NSButton(checkboxWithTitle: "同时登录ChatGPT账户", target: nil, action: nil)

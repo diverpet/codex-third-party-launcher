@@ -38,7 +38,7 @@ struct GatewayCoreTests {
         }
         assertThrows(try gateway.modelRequest(key: "foo\nbar"))
         _ = try Gateway("http://127.0.0.1:8080/v1")
-        assertEqual(try Gateway.contextWindow(""), 270_000)
+        assertEqual(try Gateway.contextWindow(""), 500_000)
         assertEqual(try Gateway.contextWindow(" 128K "), 128_000)
         assertEqual(try Gateway.contextWindow("64k"), 64_000)
         assertEqual(try Gateway.contextWindow("128000"), 128_000)
@@ -82,7 +82,7 @@ struct GatewayCoreTests {
         let model = try unwrap(catalog["models"]?.first)
         assertEqual(model["display_name"] as? String, "test")
         assertEqual(model["priority"] as? Int, 17)
-        assertEqual(model["context_window"] as? Int, 270_000)
+        assertEqual(model["context_window"] as? Int, 500_000)
     }
 
     func testCatalogUsesLaunchContextWindow() throws {
