@@ -23,7 +23,8 @@ public struct ModelOverrides: Decodable {
 
 public enum ModelCatalog {
     public static func make(
-        gatewayResponse: Data, bundledCatalog: () -> Data?, overrides: ModelOverrides = .init(), excludeGPT: Bool = false
+        gatewayResponse: Data, bundledCatalog: () -> Data?, overrides: ModelOverrides = .init(), excludeGPT: Bool = false,
+        chatGPTCatalog: Data? = nil
     ) throws -> Data {
         let response = try JSONSerialization.jsonObject(with: gatewayResponse) as? [String: Any]
         let entries: [[String: Any]]
@@ -46,10 +47,11 @@ public enum ModelCatalog {
         }
 
         var seen = Set<String>()
-        let models = entries.compactMap { entry -> [String: Any]? in
+        var models = entries.compactMap { entry -> [String: Any]? in
             guard let id = entry["slug"] as? String, !id.isEmpty,
                   id.rangeOfCharacter(from: .controlCharacters) == nil,
                   !(excludeGPT && Gateway.isGPTModel(id)),
+                  !(chatGPTCatalog != nil && id.lowercased().hasPrefix("chatgpt/")),
                   !overrides.excludePrefixes.contains(where: { id.hasPrefix($0) }),
                   seen.insert(id).inserted else { return nil }
             var model = entry
@@ -58,6 +60,22 @@ public enum ModelCatalog {
                 model["input_modalities"] = override
             }
             return model
+        }
+        if let chatGPTCatalog {
+            let accountResponse = try JSONSerialization.jsonObject(with: chatGPTCatalog) as? [String: Any]
+            guard excludeGPT, let accountModels = accountResponse?["models"] as? [[String: Any]] else {
+                throw LauncherError.chatGPTConnection("chatgpt_models_unavailable")
+            }
+            var nextPriority = min(models.compactMap { $0["priority"] as? Int }.max() ?? 999, Int(Int32.max) - 1) + 1
+            for entry in accountModels {
+                var model = entry
+                guard let id = model["slug"] as? String, id.hasPrefix("chatgpt/"),
+                      (model["visibility"] as? String) == "list", seen.insert(id).inserted else { continue }
+                model["priority"] = nextPriority
+                model["supported_in_api"] = true
+                models.append(model)
+                if nextPriority < Int(Int32.max) { nextPriority += 1 }
+            }
         }
         guard models.contains(where: { ($0["visibility"] as? String) == "list" })
         else { throw LauncherError.missingModels }

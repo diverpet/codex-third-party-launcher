@@ -9,6 +9,7 @@ public enum LauncherError: LocalizedError {
     case invalidPolicy
     case proxyUnavailable
     case proxyConfiguration
+    case chatGPTConnection(String)
 
     public var errorDescription: String? {
         switch self {
@@ -26,6 +27,17 @@ public enum LauncherError: LocalizedError {
             return "The local GPT filter could not start. Reinstall the launcher and try again."
         case .proxyConfiguration:
             return "GPT exclusion requires the launcher-managed thirdparty provider in this profile's config.toml."
+        case .chatGPTConnection(let reason):
+            switch reason {
+            case "chatgpt_plan_not_enabled":
+                return "这个账号没有授予 ChatGPT 套餐用量权限。请在授权页面选择符合条件的账号。"
+            case "chatgpt_models_unavailable":
+                return "无法读取这个 ChatGPT 账号的可用模型。请检查账号的使用权限后重试。"
+            case "chatgpt_authorization_declined":
+                return "ChatGPT 授权已取消。"
+            default:
+                return "连接 ChatGPT 账号失败。请重新打开 Launcher 后重试。"
+            }
         }
     }
 }

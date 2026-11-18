@@ -18,7 +18,7 @@ func TestProtectedRequestsNeverReachUpstream(t *testing.T) {
 		t.Errorf("unexpected upstream request: %s %s", r.Method, r.URL.Path)
 	}))
 	defer upstream.Close()
-	handler, err := makeHandler(settings{upstream.URL + "/v1", "upstream-key", "local-key", modelPattern})
+	handler, err := makeHandler(settings{BaseURL: upstream.URL + "/v1", UpstreamKey: "upstream-key", LocalKey: "local-key", ModelPattern: modelPattern}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestAllowedModelPreservesGatewayPathAndStreaming(t *testing.T) {
 		w.(http.Flusher).Flush()
 	}))
 	defer upstream.Close()
-	handler, err := makeHandler(settings{upstream.URL + "/custom/v1", "upstream-key", "local-key", modelPattern})
+	handler, err := makeHandler(settings{BaseURL: upstream.URL + "/custom/v1", UpstreamKey: "upstream-key", LocalKey: "local-key", ModelPattern: modelPattern}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

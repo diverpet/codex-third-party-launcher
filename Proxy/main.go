@@ -3,10 +3,10 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"mime"
@@ -21,10 +21,11 @@ import (
 )
 
 type settings struct {
-	BaseURL      string `json:"baseURL"`
-	UpstreamKey  string `json:"upstreamKey"`
-	LocalKey     string `json:"localKey"`
-	ModelPattern string `json:"modelPattern"`
+	BaseURL          string `json:"baseURL"`
+	UpstreamKey      string `json:"upstreamKey"`
+	LocalKey         string `json:"localKey"`
+	ModelPattern     string `json:"modelPattern"`
+	AccountDirectory string `json:"accountDirectory,omitempty"`
 }
 
 const maxRequestBytes = 64 << 20
@@ -46,7 +47,33 @@ func run() error {
 	if err := json.Unmarshal(line, &config); err != nil {
 		return err
 	}
-	handler, err := makeHandler(config)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { io.Copy(io.Discard, input); cancel() }()
+	send := json.NewEncoder(os.Stdout).Encode
+	var account *chatGPTRoute
+	var ready proxyEvent
+	if config.AccountDirectory != "" {
+		plan, lock, isNew, err := connectChatGPT(ctx, config.AccountDirectory,
+			func(event proxyEvent) error { return send(event) })
+		if err != nil {
+			message := "chatgpt_authorization_failed"
+			if err.Error() == "chatgpt_plan_not_enabled" || err.Error() == "chatgpt_authorization_declined" {
+				message = err.Error()
+			}
+			send(proxyEvent{Error: message})
+			return err
+		}
+		defer lock.Close()
+		catalog, aliases, err := plan.models(ctx)
+		if err != nil {
+			send(proxyEvent{Error: "chatgpt_models_unavailable"})
+			return err
+		}
+		account = &chatGPTRoute{baseURL: chatGPTAPI, aliases: aliases, access: plan.accessToken}
+		ready.Catalog, ready.Account, ready.NewGrant = catalog, plan.record.Email, isNew
+	}
+	handler, err := makeHandler(config, account)
 	if err != nil {
 		return err
 	}
@@ -63,10 +90,11 @@ func run() error {
 		ErrorLog:          log.New(io.Discard, "", 0),
 	}
 	go func() {
-		io.Copy(io.Discard, input)
+		<-ctx.Done()
 		server.Close()
 	}()
-	if _, err := fmt.Fprintln(os.Stdout, "http://"+listener.Addr().String()); err != nil {
+	ready.BaseURL = "http://" + listener.Addr().String()
+	if err := send(ready); err != nil {
 		return err
 	}
 	if err := server.Serve(listener); errors.Is(err, http.ErrServerClosed) {
@@ -76,7 +104,7 @@ func run() error {
 	}
 }
 
-func makeHandler(config settings) (http.Handler, error) {
+func makeHandler(config settings, account *chatGPTRoute) (http.Handler, error) {
 	upstream, err := url.Parse(config.BaseURL)
 	if err != nil || upstream.Hostname() == "" || upstream.User != nil || upstream.RawQuery != "" || upstream.Fragment != "" ||
 		(upstream.Scheme != "https" && !(upstream.Scheme == "http" && isLoopback(upstream.Hostname()))) ||
@@ -88,10 +116,14 @@ func makeHandler(config settings) (http.Handler, error) {
 		return nil, err
 	}
 
-	proxy := &httputil.ReverseProxy{
+	proxy := reverseProxy(upstream)
+	return gatewayRequests(proxy, config, excluded, account), nil
+}
+
+func reverseProxy(upstream *url.URL) *httputil.ReverseProxy {
+	return &httputil.ReverseProxy{
 		Rewrite: func(request *httputil.ProxyRequest) {
 			request.SetURL(upstream)
-			request.Out.Header.Set("Authorization", "Bearer "+config.UpstreamKey)
 			request.Out.Header.Del("X-Api-Key")
 			request.Out.Header.Del("Cookie")
 		},
@@ -105,7 +137,10 @@ func makeHandler(config settings) (http.Handler, error) {
 			reject(w, http.StatusBadGateway, "upstream_unavailable", "The gateway request failed.")
 		},
 	}
-	return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+}
+
+func gatewayRequests(proxy *httputil.ReverseProxy, config settings, excluded *regexp.Regexp, account *chatGPTRoute) http.HandlerFunc {
+	return func(w http.ResponseWriter, request *http.Request) {
 		if subtle.ConstantTimeCompare([]byte(request.Header.Get("Authorization")), []byte("Bearer "+config.LocalKey)) != 1 {
 			reject(w, http.StatusUnauthorized, "invalid_api_key", "Invalid local gateway credential.")
 			return
@@ -117,6 +152,7 @@ func makeHandler(config settings) (http.Handler, error) {
 		}
 		path := request.URL.Path
 		if request.Method == http.MethodGet && path == "/models" {
+			request.Header.Set("Authorization", "Bearer "+config.UpstreamKey)
 			proxy.ServeHTTP(w, request)
 			return
 		}
@@ -144,6 +180,10 @@ func makeHandler(config settings) (http.Handler, error) {
 			reject(w, http.StatusBadRequest, "invalid_request", "Send a JSON request with one explicit model.")
 			return
 		}
+		if strings.HasPrefix(strings.ToLower(model), chatGPTPrefix) && account != nil {
+			account.serve(w, request, model, body)
+			return
+		}
 		if excluded.MatchString(model) {
 			reject(w, http.StatusBadRequest, "model_excluded", "This model is blocked by local GPT exclusion.")
 			return
@@ -151,8 +191,9 @@ func makeHandler(config settings) (http.Handler, error) {
 		request.Body = io.NopCloser(bytes.NewReader(body))
 		request.ContentLength = int64(len(body))
 		request.TransferEncoding = nil
+		request.Header.Set("Authorization", "Bearer "+config.UpstreamKey)
 		proxy.ServeHTTP(w, request)
-	}), nil
+	}
 }
 
 func requestModel(body []byte) (string, error) {

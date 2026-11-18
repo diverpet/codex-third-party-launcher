@@ -10,6 +10,7 @@ struct GatewayCoreTests {
         try tests.testCatalogIDsAndImageClassification()
         try tests.testCatalogFiltersOnlyExplicitNonResponsesModels()
         try tests.testGPTExclusionUsesSameModelIDsAsProxy()
+        try tests.testChatGPTModelsAreDistinctFromGatewayModels()
         try tests.testNativeCatalogDoesNotLoadBundledDefaults()
         try tests.testHomeFolderDoesNotReuseOfficialConfiguration()
         try tests.testProxyConfigurationChangesOnlyLauncherProvider()
@@ -112,6 +113,17 @@ struct GatewayCoreTests {
         let result = try ModelCatalog.make(gatewayResponse: response, bundledCatalog: { nil }, excludeGPT: true)
         let catalog = try unwrap(JSONSerialization.jsonObject(with: result) as? [String: [[String: Any]]])
         assertEqual(catalog["models"]?.compactMap { $0["slug"] as? String }, ["deepseek-v4"])
+    }
+
+    func testChatGPTModelsAreDistinctFromGatewayModels() throws {
+        let response = Data(#"{"data":[{"id":"gpt-6-luna"},{"id":"deepseek-v4"},{"id":"chatgpt/duplicate"}]}"#.utf8)
+        let account = Data(#"{"models":[{"slug":"chatgpt/gpt-6.1-sol","display_name":"GPT-6.1 · ChatGPT","visibility":"list"}]}"#.utf8)
+        let result = try ModelCatalog.make(gatewayResponse: response, bundledCatalog: { nil }, excludeGPT: true, chatGPTCatalog: account)
+        let catalog = try unwrap(JSONSerialization.jsonObject(with: result) as? [String: [[String: Any]]])
+        let models = try unwrap(catalog["models"])
+        assertEqual(models.compactMap { $0["slug"] as? String }, ["deepseek-v4", "chatgpt/gpt-6.1-sol"])
+        assertEqual(models.last?["display_name"] as? String, "GPT-6.1 · ChatGPT")
+        assertThrows(try ModelCatalog.make(gatewayResponse: response, bundledCatalog: { nil }, chatGPTCatalog: account))
     }
 
     func testProxyConfigurationChangesOnlyLauncherProvider() throws {

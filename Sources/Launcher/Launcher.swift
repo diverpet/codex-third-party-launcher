@@ -22,6 +22,7 @@ private final class Launcher: NSObject, NSApplicationDelegate {
 
     private let files = FileManager.default
     private let workspace = NSWorkspace.shared
+    private weak var chatGPTCheckbox: NSButton?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
@@ -51,7 +52,7 @@ private final class Launcher: NSObject, NSApplicationDelegate {
             return
         }
 
-        guard let (address, secret, excludeGPT) = promptForGateway() else { return }
+        guard let (address, secret, excludeGPT, includeChatGPT) = promptForGateway() else { return }
         let gateway = try Gateway(address)
         let key = secret.trimmingCharacters(in: .whitespacesAndNewlines)
         let request = try gateway.modelRequest(key: key)
@@ -83,9 +84,19 @@ private final class Launcher: NSObject, NSApplicationDelegate {
             try files.createDirectory(at: directory, withIntermediateDirectories: true,
                                       attributes: [.posixPermissions: 0o700])
         }
+        let proxy: LocalModelProxy?
+        if excludeGPT {
+            let accountDirectory = includeChatGPT ? home.appendingPathComponent(".codex-thirdparty/chatgpt-plan") : nil
+            if let accountDirectory { try checkPrivatePaths([accountDirectory], in: home) }
+            proxy = try await LocalModelProxy(gateway: gateway, key: key, accountDirectory: accountDirectory,
+                                              authorize: authorizeChatGPT)
+        } else {
+            proxy = nil
+        }
         let models = try ModelCatalog.make(gatewayResponse: data,
                                            bundledCatalog: { self.bundledCatalog(cli, profile: profile) },
-                                           overrides: overrides, excludeGPT: excludeGPT)
+                                           overrides: overrides, excludeGPT: excludeGPT,
+                                           chatGPTCatalog: proxy?.chatGPTCatalog)
         try writePrivate(models, to: catalog)
         if !files.fileExists(atPath: config.path) {
             try writePrivate(Data(try gateway.configuration(catalog: catalog, userHome: home).utf8), to: config)
@@ -96,8 +107,8 @@ private final class Launcher: NSObject, NSApplicationDelegate {
                      "OPENAI_IDENTITY_TOKEN_FILE", "OPENAI_FEDERATION_RULE_ID"] {
             environment.removeValue(forKey: name)
         }
-        if excludeGPT {
-            let proxy = try LocalModelProxy(gateway: gateway, key: key)
+        if let proxy {
+            if proxy.newGrant { showConnectedAccount(proxy.account) }
             let original = try Data(contentsOf: config)
             let active = try gateway.configuration(String(decoding: original, as: UTF8.self), forLocalProxy: proxy.baseURL)
             try writePrivate(JSONEncoder().encode(ProxyConfiguration(original: original, active: Data(active.utf8))), to: proxyState)
@@ -126,6 +137,27 @@ private final class Launcher: NSObject, NSApplicationDelegate {
             throw CocoaError(.executableLoad, userInfo: [
                 NSLocalizedDescriptionKey: "macOS could not open the isolated desktop app."
             ])
+        }
+    }
+
+    private func authorizeChatGPT(_ url: URL) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "授权 ChatGPT 账号模型"
+        alert.informativeText = "请在浏览器选择你正在使用的 ChatGPT 账号。带 ChatGPT 标记的模型使用该账号的套餐额度。"
+        alert.addButton(withTitle: "Continue with ChatGPT")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn && workspace.open(url)
+    }
+
+    private func showConnectedAccount(_ account: String?) {
+        let alert = NSAlert()
+        alert.messageText = "已连接 ChatGPT 套餐"
+        let identity = account.map { "\($0)\n\n" } ?? ""
+        alert.informativeText = identity + "在模型菜单选择带 ChatGPT 标记的模型时，将使用该账号的套餐额度。"
+        alert.addButton(withTitle: "继续")
+        alert.addButton(withTitle: "管理用量")
+        if alert.runModal() == .alertSecondButtonReturn, let url = URL(string: "https://chatgpt.com/settings/usage") {
+            workspace.open(url)
         }
     }
 
@@ -251,7 +283,13 @@ private final class Launcher: NSObject, NSApplicationDelegate {
         return panel
     }
 
-    private func promptForGateway() -> (String, String, Bool)? {
+    @objc private func updateChatGPTOption(_ sender: NSButton) {
+        let enabled = sender.state == .on
+        chatGPTCheckbox?.isEnabled = enabled
+        if !enabled { chatGPTCheckbox?.state = .off }
+    }
+
+    private func promptForGateway() -> (String, String, Bool, Bool)? {
         let alert = NSAlert()
         alert.icon = NSApp.applicationIconImage
         alert.messageText = "Connect to a gateway"
@@ -263,7 +301,11 @@ private final class Launcher: NSObject, NSApplicationDelegate {
         address.placeholderString = "Base URL"
         let key = NSSecureTextField()
         key.placeholderString = "API key (this launch only)"
-        let excludeGPT = NSButton(checkboxWithTitle: "排除 GPT 系列模型（推荐）", target: nil, action: nil)
+        let excludeGPT = NSButton(checkboxWithTitle: "排除 GPT 系列模型（推荐）", target: self, action: #selector(updateChatGPTOption(_:)))
+        let includeChatGPT = NSButton(checkboxWithTitle: "把 ChatGPT 账号的模型加入隔离实例", target: nil, action: nil)
+        includeChatGPT.isEnabled = false
+        includeChatGPT.setAccessibilityHelp("开启 GPT 排除后可选。首次使用时在浏览器授权当前账号。")
+        chatGPTCheckbox = includeChatGPT
         let explanation = """
         Codex Desktop 可能在后台调用 GPT 模型，产生额外用量。
         勾选后隐藏 GPT 模型，并拦截相关请求。
@@ -274,7 +316,7 @@ private final class Launcher: NSObject, NSApplicationDelegate {
         filterRow.orientation = .horizontal
         filterRow.alignment = .centerY
         filterRow.spacing = 6
-        let stack = NSStackView(views: [address, key, filterRow])
+        let stack = NSStackView(views: [address, key, filterRow, includeChatGPT])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8
@@ -295,10 +337,12 @@ private final class Launcher: NSObject, NSApplicationDelegate {
         }
         defer {
             helpIcon.dismiss()
+            chatGPTCheckbox = nil
             if let pasteShortcut { NSEvent.removeMonitor(pasteShortcut) }
         }
         guard alert.runModal() == .alertFirstButtonReturn else { return nil }
-        return (address.stringValue, key.stringValue, excludeGPT.state == .on)
+        return (address.stringValue, key.stringValue, excludeGPT.state == .on,
+                excludeGPT.state == .on && includeChatGPT.state == .on)
     }
 
     private func bundledCatalog(_ cli: URL?, profile: URL) -> Data? {
