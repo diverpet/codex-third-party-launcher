@@ -31,6 +31,10 @@
 
 支持速度档位的套餐模型会在模型菜单中分别显示「标准」「快速」和「极速」选项。可选档位以账号返回的模型目录为准。快速和极速按 ChatGPT 套餐的对应档位消耗额度。 [Codex 速度说明](https://learn.chatgpt.com/docs/agent-configuration/speed)
 
+### 轮次完成通知
+
+首次启动时允许 **Codex Third Party** 发送系统通知。隔离实例在后台完成一轮后，点击由 **Codex Third Party** 发出的通知会打开该实例中的对应会话。请在隔离实例的 **设置 → 通知** 里关闭「轮次完成通知」，避免同时收到 Codex 自带的通知。隔离实例退出后，启动器的通知会自动清除。网关已有自定义 `notify` 时会继续使用原有设置。
+
 ## 模型列表与本地覆盖
 
 启动器支持 OpenAI 模型列表的 `data[].id`，也兼容 Codex `models[]` 目录。网关可在模型条目上附带以下可选扩展字段。 [OpenAI Models API](https://developers.openai.com/api/reference/resources/models/methods/list)

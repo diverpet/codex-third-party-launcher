@@ -129,10 +129,26 @@ private final class Launcher: NSObject, NSApplicationDelegate {
 
         var environment = ProcessInfo.processInfo.environment
         for name in ["OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN",
-                     "OPENAI_IDENTITY_TOKEN_FILE", "OPENAI_FEDERATION_RULE_ID"] {
+                     "OPENAI_IDENTITY_TOKEN_FILE", "OPENAI_FEDERATION_RULE_ID",
+                     TurnCompletion.notifierVariable, TurnCompletion.relayDirectoryVariable] {
             environment.removeValue(forKey: name)
         }
+        let notifications: TurnNotifications?
+        if let executable = Bundle.main.executableURL,
+           let relay = await prepareTurnNotifications(config) {
+            notifications = relay
+            environment[TurnCompletion.notifierVariable] = executable.path
+            environment[TurnCompletion.relayDirectoryVariable] = relay.directory.path
+        } else {
+            notifications = nil
+        }
+        defer { notifications?.finish() }
+
+        environment["CODEX_HOME"] = profile.path
+        environment["CODEX_SQLITE_HOME"] = profile.path
+        environment["CODEX_ELECTRON_USER_DATA_PATH"] = appData.path
         if let proxy {
+            defer { withExtendedLifetime(proxy) {} }
             if proxy.newGrant { showConnectedAccount(proxy.account) }
             let original = try Data(contentsOf: config)
             let active = try gateway.configuration(String(decoding: original, as: UTF8.self), forLocalProxy: proxy.baseURL)
@@ -140,29 +156,13 @@ private final class Launcher: NSObject, NSApplicationDelegate {
             defer { try? restoreConfiguration(config, backup: proxyState) }
             try writePrivate(Data(active.utf8), to: config)
             environment["CODEX_GATEWAY_API_KEY"] = proxy.localKey
-            environment["CODEX_HOME"] = profile.path
-            environment["CODEX_SQLITE_HOME"] = profile.path
-            environment["CODEX_ELECTRON_USER_DATA_PATH"] = appData.path
-            try await launchWithProxy(bundle, appData: appData, environment: environment, proxy: proxy)
+            try await launchDesktop(bundle, appData: appData, environment: environment,
+                                    notifications: notifications, keepAlive: true)
             return
         }
         environment["CODEX_GATEWAY_API_KEY"] = key
-        let launch = Process()
-        launch.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        launch.arguments = [
-            "-n", "--env", "CODEX_HOME=\(profile.path)",
-            "--env", "CODEX_SQLITE_HOME=\(profile.path)",
-            "--env", "CODEX_ELECTRON_USER_DATA_PATH=\(appData.path)",
-            bundle.path, "--args", "--user-data-dir=\(appData.path)",
-        ]
-        launch.environment = environment
-        try launch.run()
-        launch.waitUntilExit()
-        guard launch.terminationStatus == 0 else {
-            throw CocoaError(.executableLoad, userInfo: [
-                NSLocalizedDescriptionKey: "macOS could not open the isolated desktop app."
-            ])
-        }
+        try await launchDesktop(bundle, appData: appData, environment: environment,
+                                notifications: notifications, keepAlive: false)
     }
 
     private func authorizeChatGPT(_ url: URL) -> Bool {
@@ -186,8 +186,30 @@ private final class Launcher: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func launchWithProxy(_ bundle: URL, appData: URL, environment: [String: String], proxy: LocalModelProxy) async throws {
-        defer { withExtendedLifetime(proxy) {} }
+    private func prepareTurnNotifications(_ config: URL) async -> TurnNotifications? {
+        do {
+            let original = try String(contentsOf: config, encoding: .utf8)
+            guard let configured = try TurnCompletion.addingNotifyCommand(to: original) else { return nil }
+            if configured != original {
+                try writePrivate(Data(configured.utf8), to: config)
+            }
+            let directory = files.temporaryDirectory.appendingPathComponent(
+                TurnNotifications.directoryPrefix + UUID().uuidString, isDirectory: true)
+            try files.createDirectory(at: directory, withIntermediateDirectories: false,
+                                      attributes: [.posixPermissions: 0o700])
+            let notifications = TurnNotifications(directory: directory)
+            if await notifications.requestPermission() {
+                return notifications
+            }
+            notifications.finish()
+        } catch {
+            // A notification setup failure should not prevent the desktop from launching.
+        }
+        return nil
+    }
+
+    private func launchDesktop(_ bundle: URL, appData: URL, environment: [String: String],
+                               notifications: TurnNotifications?, keepAlive: Bool) async throws {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.createsNewApplicationInstance = true
         configuration.allowsRunningApplicationSubstitution = false
@@ -196,9 +218,13 @@ private final class Launcher: NSObject, NSApplicationDelegate {
         configuration.environment = environment
         let app = try await workspace.openApplication(at: bundle, configuration: configuration)
         guard app.bundleURL?.resolvingSymlinksInPath().path == bundle.resolvingSymlinksInPath().path else {
-            throw LauncherError.proxyUnavailable
+            throw CocoaError(.executableLoad, userInfo: [
+                NSLocalizedDescriptionKey: "macOS could not open the isolated desktop app."
+            ])
         }
-        while !app.isTerminated {
+        notifications?.attach(to: app)
+        while (keepAlive || notifications != nil) && !app.isTerminated {
+            await notifications?.postPending()
             try await Task.sleep(for: .seconds(1))
         }
     }
@@ -341,6 +367,11 @@ private final class Launcher: NSObject, NSApplicationDelegate {
 enum LauncherApp {
     @MainActor
     static func main() {
+        let arguments = CommandLine.arguments
+        if arguments.dropFirst().first == "--notify-turn" {
+            if arguments.count == 3 { TurnNotifications.enqueue(arguments[2]) }
+            return
+        }
         let launcher = Launcher()
         let application = NSApplication.shared
         application.delegate = launcher

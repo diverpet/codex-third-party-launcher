@@ -19,11 +19,48 @@ struct GatewayCoreTests {
         try tests.testHomeFolderDoesNotReuseOfficialConfiguration()
         try tests.testProxyConfigurationChangesOnlyLauncherProvider()
         try tests.testProxyRecoveryPreservesDesktopEdits()
+        try tests.testTurnCompletionNotifyConfiguration()
+        try tests.testTurnCompletionEvent()
         try tests.testDesktopInstallerRejectsUnverifiedAppsAndManagedSymlinks()
         if let officialApp = ProcessInfo.processInfo.environment["CODEX_TEST_OFFICIAL_APP"] {
             try tests.testOfficialAppCopyInTemporaryDirectory(URL(fileURLWithPath: officialApp))
         }
         print("All launcher checks passed.")
+    }
+
+    func testTurnCompletionNotifyConfiguration() throws {
+        let gateway = try Gateway("http://127.0.0.1:9000/v1")
+        let original = try gateway.configuration(catalog: URL(fileURLWithPath: "/tmp/catalog.json"),
+                                                 userHome: URL(fileURLWithPath: "/Users/example"))
+        let configured = try unwrap(TurnCompletion.addingNotifyCommand(to: original))
+        assertTrue(configured.hasPrefix("notify = ["))
+        assertTrue(configured.hasSuffix(original))
+        assertEqual(try TurnCompletion.addingNotifyCommand(to: configured), configured)
+        for option in ["notify", "\"notify\"", "'notify'"] {
+            assertEqual(try TurnCompletion.addingNotifyCommand(to: "  \(option) = []\n" + original), nil)
+        }
+        let proxied = try gateway.configuration(configured, forLocalProxy: URL(string: "http://127.0.0.1:9001/v1")!)
+        assertEqual(proxied.split(separator: "\n").first, configured.split(separator: "\n").first)
+    }
+
+    func testTurnCompletionEvent() throws {
+        let thread = "140C25EA-BE3D-40BE-92A4-BBC3289B2079"
+        let payload = """
+            {"type":"agent-turn-complete","thread-id":"\(thread)","turn-id":"4",
+             "input-messages":["private prompt"],"last-assistant-message":"private reply"}
+            """
+        let event = try unwrap(TurnCompletion.parse(Data(payload.utf8)))
+        let stored = try unwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(event)) as? [String: String])
+        assertEqual(stored, ["type": "agent-turn-complete", "thread-id": thread, "turn-id": "4"])
+        assertEqual(TurnCompletion.threadURL(event.threadID)?.absoluteString, "codex://threads/\(thread.lowercased())")
+        assertEqual(TurnCompletion.parse(try JSONEncoder().encode(event))?.identifier, event.identifier)
+        let nextTurn = payload.replacingOccurrences(of: "\"turn-id\":\"4\"", with: "\"turn-id\":\"5\"")
+        assertTrue(TurnCompletion.parse(Data(nextTurn.utf8))?.identifier != event.identifier)
+        for invalid in [payload.replacingOccurrences(of: thread, with: "../wrong"),
+                        payload.replacingOccurrences(of: "agent-turn-complete", with: "turn-started"),
+                        payload.replacingOccurrences(of: "\"turn-id\":\"4\"", with: "\"turn-id\":\"\"")] {
+            assertTrue(TurnCompletion.parse(Data(invalid.utf8)) == nil)
+        }
     }
 
     func testGatewayNormalizationAndKeyHandling() throws {
