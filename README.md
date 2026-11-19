@@ -17,7 +17,7 @@
 1. 在 Finder 打开 `~/Applications/Codex Third Party.app`。
 2. 首次使用时填写网关的完整 Base URL 和 API key。成功加载模型后，启动器将这组凭据保存到 macOS 钥匙串。下次打开会填入上次的 Base URL，API key 留空即可复用。切换 Base URL 或更换密钥时，填写要使用的 API key。远程网关使用 HTTPS，本机回环网关也可使用 HTTP。
 3. **最大上下文** 可留空，默认给本次启动的所有 Base URL 模型设置 500,000 token。也可以输入实际的上限，例如 `128000` 或 `128K`。ChatGPT 账号模型使用官方目录提供的窗口。
-4. 如需阻止 GPT 系列消耗网关额度，勾选 **排除 GPT 系列模型（推荐）**，再点 **Load Models and Launch**。切换网关或过滤设置前，先退出隔离实例，再打开启动器。
+4. 如需阻止 GPT 系列消耗网关额度，勾选 **排除 GPT 系列模型（推荐）**，再点 **加载模型并启动**。切换网关或过滤设置前，先退出隔离实例，再打开启动器。
 
 网关至少需要支持 `GET /models` 与 `POST /responses`（相对 Base URL），并接受 Bearer token。启动器只在钥匙串中保存 API key，并在启动时通过环境变量把会话所需的凭据传给子进程。每个 Base URL 使用独立的 Codex 数据目录和桌面状态，原官方实例可以照常使用。启动器默认将用户主目录标为不加载项目配置，避免官方 `~/.codex/config.toml` 被第三方实例当作项目配置。实际项目目录可按需单独信任。 [网关兼容性](https://learn.chatgpt.com/docs/enterprise/gateway-compatibility)
 
@@ -25,7 +25,7 @@
 
 勾选 GPT 排除时，菜单隐藏 GPT 模型，隔离 Codex 改用当前会话的本机 HTTP 代理。代理只监听回环地址。它在转发前检查 Responses 请求的模型 ID，拦截 `gpt-6-luna`、`openai/gpt-6-luna` 等名称，同时保留其他模型的流式响应。适用范围是这次启动配置的网关。隐藏真实模型名称的网关别名仍按请求中的 ID 判断。
 
-开启 GPT 排除后，也可以勾选 **同时登录ChatGPT账户**。首次使用时，在浏览器授权同一个 ChatGPT 账号。隔离实例的菜单会标记使用 ChatGPT 套餐的模型，网关模型继续使用 Base URL 和 API Key。官方账号连接使用独立保存的授权。未加前缀的 GPT 请求仍会被拦截。套餐模型受账号资格及当前预览接口能力限制。 [Sign in with ChatGPT](https://developers.openai.com/siwc/token-sharing-open-source) · [预览限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)
+开启 GPT 排除后，也可以勾选 **同时登录 ChatGPT 账户**。首次使用时，在浏览器授权同一个 ChatGPT 账号。隔离实例的菜单会标记使用 ChatGPT 套餐的模型，网关模型继续使用 Base URL 和 API Key。官方账号连接使用独立保存的授权。未加前缀的 GPT 请求仍会被拦截。套餐模型受账号资格及当前预览接口能力限制。 [Sign in with ChatGPT](https://developers.openai.com/siwc/token-sharing-open-source) · [预览限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)
 
 套餐模型支持 Codex 的 Web Search，沿用隔离实例的搜索设置。搜索权限取决于模型、账号和工作区策略。 [Web Search](https://developers.openai.com/api/docs/guides/tools-web-search)
 

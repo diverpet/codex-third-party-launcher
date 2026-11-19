@@ -3,7 +3,6 @@ import AppKit
 @MainActor
 final class HoverHelpButton: NSButton {
     private let explanationPopover = NSPopover()
-    private var hoverArea: NSTrackingArea?
 
     init(explanation: String) {
         super.init(frame: .zero)
@@ -13,6 +12,7 @@ final class HoverHelpButton: NSButton {
         contentTintColor = .secondaryLabelColor
         target = self
         action = #selector(toggleExplanation)
+        toolTip = explanation
         setAccessibilityLabel("GPT 排除说明")
         setAccessibilityHelp(explanation)
 
@@ -38,26 +38,11 @@ final class HoverHelpButton: NSButton {
 
     required init?(coder: NSCoder) { nil }
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let hoverArea { removeTrackingArea(hoverArea) }
-        let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect, .enabledDuringMouseDrag],
-                                  owner: self, userInfo: nil)
-        addTrackingArea(area)
-        hoverArea = area
-    }
-
-    override func mouseEntered(with event: NSEvent) { showExplanation() }
-    override func mouseExited(with event: NSEvent) { dismiss() }
-
-    func dismiss() { explanationPopover.close() }
-
     @objc private func toggleExplanation() {
-        if explanationPopover.isShown { dismiss() } else { showExplanation() }
-    }
-
-    private func showExplanation() {
-        guard window?.isVisible == true, !explanationPopover.isShown else { return }
-        explanationPopover.show(relativeTo: bounds, of: self, preferredEdge: .maxY)
+        if explanationPopover.isShown {
+            explanationPopover.close()
+        } else {
+            explanationPopover.show(relativeTo: bounds, of: self, preferredEdge: .maxY)
+        }
     }
 }

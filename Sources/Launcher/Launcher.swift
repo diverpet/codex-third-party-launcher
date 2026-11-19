@@ -22,7 +22,6 @@ private final class Launcher: NSObject, NSApplicationDelegate {
 
     private let files = FileManager.default
     private let workspace = NSWorkspace.shared
-    private weak var chatGPTCheckbox: NSButton?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
@@ -57,13 +56,12 @@ private final class Launcher: NSObject, NSApplicationDelegate {
             savedCredentials = try await Task.detached { try GatewayCredentials.load() }.value
         } catch {
             savedCredentials = nil
-            showKeychainWarning("Could not load the saved gateway credentials", error: error)
+            showKeychainWarning("无法读取已保存的网关凭据", error: error)
         }
 
-        guard let (address, secret, contextWindow, excludeGPT, includeChatGPT) =
-            promptForGateway(savedCredentials: savedCredentials) else { return }
-        let gateway = try Gateway(address)
-        var key = secret.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let selection = await GatewayPrompt(savedCredentials: savedCredentials).run() else { return }
+        let gateway = try Gateway(selection.address)
+        var key = selection.key.trimmingCharacters(in: .whitespacesAndNewlines)
         if key.isEmpty, let savedCredentials, savedCredentials.baseURL == gateway.baseURL.absoluteString {
             key = savedCredentials.apiKey
         }
@@ -97,8 +95,8 @@ private final class Launcher: NSObject, NSApplicationDelegate {
                                       attributes: [.posixPermissions: 0o700])
         }
         let proxy: LocalModelProxy?
-        if excludeGPT {
-            let accountDirectory = includeChatGPT ? home.appendingPathComponent(".codex-thirdparty/chatgpt-plan") : nil
+        if selection.excludeGPT {
+            let accountDirectory = selection.includeChatGPT ? home.appendingPathComponent(".codex-thirdparty/chatgpt-plan") : nil
             if let accountDirectory { try checkPrivatePaths([accountDirectory], in: home) }
             proxy = try await LocalModelProxy(gateway: gateway, key: key, accountDirectory: accountDirectory,
                                               authorize: authorizeChatGPT)
@@ -107,13 +105,13 @@ private final class Launcher: NSObject, NSApplicationDelegate {
         }
         let models = try ModelCatalog.make(gatewayResponse: data,
                                            bundledCatalog: { self.bundledCatalog(cli, profile: profile) },
-                                           overrides: overrides, excludeGPT: excludeGPT,
-                                           chatGPTCatalog: proxy?.chatGPTCatalog, contextWindow: contextWindow)
+                                           overrides: overrides, excludeGPT: selection.excludeGPT,
+                                           chatGPTCatalog: proxy?.chatGPTCatalog, contextWindow: selection.contextWindow)
         try writePrivate(models, to: catalog)
         if !files.fileExists(atPath: config.path) {
             try writePrivate(Data(try gateway.configuration(catalog: catalog, userHome: home).utf8), to: config)
         }
-        let reasoningLevels = try ModelCatalog.gatewayReasoningLevels(in: models, includesChatGPT: includeChatGPT)
+        let reasoningLevels = try ModelCatalog.gatewayReasoningLevels(in: models, includesChatGPT: selection.includeChatGPT)
         if !reasoningLevels.isEmpty {
             let original = try String(contentsOf: config, encoding: .utf8)
             let configured = Gateway.enableReasoningLevels(reasoningLevels, in: original)
@@ -125,7 +123,7 @@ private final class Launcher: NSObject, NSApplicationDelegate {
             do {
                 try await Task.detached { try credentials.save() }.value
             } catch {
-                showKeychainWarning("Could not save the gateway credentials for next time", error: error)
+                showKeychainWarning("无法保存网关凭据", error: error)
             }
         }
 
@@ -310,89 +308,12 @@ private final class Launcher: NSObject, NSApplicationDelegate {
         return panel
     }
 
-    @objc private func updateChatGPTOption(_ sender: NSButton) {
-        let enabled = sender.state == .on
-        chatGPTCheckbox?.isEnabled = enabled
-        if !enabled { chatGPTCheckbox?.state = .off }
-    }
-
     private func showKeychainWarning(_ message: String, error: Error) {
         let alert = NSAlert()
         alert.messageText = message
         alert.informativeText = error.localizedDescription
-        alert.addButton(withTitle: "Continue")
+        alert.addButton(withTitle: "继续")
         alert.runModal()
-    }
-
-    private func promptForGateway(savedCredentials: GatewayCredentials?) -> (String, String, Int, Bool, Bool)? {
-        let alert = NSAlert()
-        alert.icon = NSApp.applicationIconImage
-        alert.messageText = "Connect to a gateway"
-        alert.informativeText = savedCredentials == nil
-            ? "Enter a Responses API Base URL and API key. The launcher saves them in macOS Keychain after loading models."
-            : "Leave the API key blank to reuse the saved key for this Base URL. Enter a key to replace it or to connect to a different gateway."
-        alert.addButton(withTitle: "Load Models and Launch")
-        alert.addButton(withTitle: "Cancel")
-
-        let address = NSTextField()
-        address.placeholderString = "Base URL"
-        if let savedCredentials { address.stringValue = savedCredentials.baseURL }
-        let key = NSSecureTextField()
-        key.placeholderString = savedCredentials == nil ? "API key" : "API key (saved for the previous Base URL)"
-        let context = NSTextField()
-        context.placeholderString = "最大上下文（仅 API 模型，默认 \(Gateway.defaultContextWindow / 1_000)K）"
-        context.setAccessibilityLabel("最大上下文")
-        let excludeGPT = NSButton(checkboxWithTitle: "排除 GPT 系列模型（推荐）", target: self, action: #selector(updateChatGPTOption(_:)))
-        let includeChatGPT = NSButton(checkboxWithTitle: "同时登录ChatGPT账户", target: nil, action: nil)
-        includeChatGPT.isEnabled = false
-        includeChatGPT.setAccessibilityHelp("开启 GPT 排除后可选。首次使用时在浏览器授权当前账号。")
-        chatGPTCheckbox = includeChatGPT
-        let explanation = """
-        Codex Desktop 可能在后台调用 GPT 模型，产生额外用量。
-        勾选后隐藏 GPT 模型，并拦截相关请求。
-        """
-        excludeGPT.setAccessibilityHelp(explanation)
-        let helpIcon = HoverHelpButton(explanation: explanation)
-        let filterRow = NSStackView(views: [excludeGPT, helpIcon])
-        filterRow.orientation = .horizontal
-        filterRow.alignment = .centerY
-        filterRow.spacing = 6
-        let stack = NSStackView(views: [address, key, context, filterRow, includeChatGPT])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 8
-        for field in [address, key, context] {
-            field.widthAnchor.constraint(equalToConstant: 380).isActive = true
-        }
-        stack.frame = NSRect(origin: .zero, size: stack.fittingSize)
-        alert.accessoryView = stack
-        alert.window.initialFirstResponder = address
-        let pasteShortcut = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard event.window === alert.window,
-                  event.modifierFlags.intersection([.command, .control, .option, .shift]) == .command,
-                  event.charactersIgnoringModifiers?.lowercased() == "v",
-                  let editor = alert.window.firstResponder as? NSTextView,
-                  editor === address.currentEditor() || editor === key.currentEditor()
-                    || editor === context.currentEditor() else { return event }
-            editor.paste(nil)
-            return nil
-        }
-        defer {
-            helpIcon.dismiss()
-            chatGPTCheckbox = nil
-            if let pasteShortcut { NSEvent.removeMonitor(pasteShortcut) }
-        }
-        while alert.runModal() == .alertFirstButtonReturn {
-            do {
-                let window = try Gateway.contextWindow(context.stringValue)
-                return (address.stringValue, key.stringValue, window, excludeGPT.state == .on,
-                        excludeGPT.state == .on && includeChatGPT.state == .on)
-            } catch {
-                NSAlert(error: error).runModal()
-                alert.window.initialFirstResponder = context
-            }
-        }
-        return nil
     }
 
     private func bundledCatalog(_ cli: URL?, profile: URL) -> Data? {
@@ -423,8 +344,29 @@ enum LauncherApp {
         let launcher = Launcher()
         let application = NSApplication.shared
         application.delegate = launcher
+        application.mainMenu = makeMainMenu()
         withExtendedLifetime(launcher) {
             application.run()
         }
+    }
+
+    @MainActor
+    private static func makeMainMenu() -> NSMenu {
+        let menu = NSMenu()
+        let appItem = NSMenuItem()
+        let appMenu = NSMenu()
+        appMenu.addItem(withTitle: "退出 Codex Third Party", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appItem.submenu = appMenu
+        menu.addItem(appItem)
+
+        let editItem = NSMenuItem()
+        let editMenu = NSMenu(title: "编辑")
+        editMenu.addItem(withTitle: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "拷贝", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editItem.submenu = editMenu
+        menu.addItem(editItem)
+        return menu
     }
 }

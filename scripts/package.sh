@@ -28,7 +28,11 @@ identifier=io.github.diverpet.codex-third-party-launcher.pkg
 component=Launcher.pkg
 components="$staging/components.plist"
 /usr/bin/pkgbuild --analyze --root "$payload" "$components"
-/usr/libexec/PlistBuddy -c 'Set :0:BundleIsRelocatable false' "$components"
+if /usr/libexec/PlistBuddy -c 'Print :0:BundleIsRelocatable' "$components" >/dev/null 2>&1; then
+  /usr/libexec/PlistBuddy -c 'Set :0:BundleIsRelocatable false' "$components"
+else
+  /usr/libexec/PlistBuddy -c 'Add :0:BundleIsRelocatable bool false' "$components"
+fi
 /usr/libexec/PlistBuddy -c 'Set :0:BundleHasStrictIdentifier true' "$components"
 /usr/libexec/PlistBuddy -c 'Set :0:BundleIsVersionChecked true' "$components"
 /usr/libexec/PlistBuddy -c 'Set :0:BundleOverwriteAction upgrade' "$components"
