@@ -6,6 +6,16 @@ public struct ModelOverrides: Decodable {
         let levels: [String]
         let defaultEffort: String
 
+        fileprivate init?(catalogEntry: [String: Any]) {
+            guard let entries = catalogEntry["supported_reasoning_levels"] as? [[String: Any]],
+                  let defaultEffort = catalogEntry["default_reasoning_level"] as? String else { return nil }
+            let levels = entries.compactMap { $0["effort"] as? String }
+            guard levels.count == entries.count else { return nil }
+            self.levels = levels
+            self.defaultEffort = defaultEffort
+            guard isValid else { return nil }
+        }
+
         var isValid: Bool {
             let unique = Set(levels)
             return levels.count == unique.count && unique.isSubset(of: Self.knownLevels) && unique.contains(defaultEffort)
@@ -15,10 +25,6 @@ public struct ModelOverrides: Decodable {
     public let excludePrefixes: [String]
     public let inputModalities: [String: [String]]
     public let reasoningEfforts: [String: ReasoningEfforts]
-
-    public var declaredReasoningLevels: Set<String> {
-        Set(reasoningEfforts.values.flatMap(\.levels))
-    }
 
     public init(excludePrefixes: [String] = [], inputModalities: [String: [String]] = [:]) {
         self.excludePrefixes = excludePrefixes
@@ -61,6 +67,9 @@ public enum ModelCatalog {
                 model["supported_reasoning_levels"] = []
                 model.removeValue(forKey: "default_reasoning_level")
                 model.removeValue(forKey: "supports_reasoning_effort_updates")
+                if let reasoning = ModelOverrides.ReasoningEfforts(catalogEntry: entry) {
+                    setReasoning(reasoning, on: &model)
+                }
                 if let declared = entry["input_modalities"] as? [String] {
                     model["input_modalities"] = declared.contains("image") ? ["text", "image"] : ["text"]
                 }
@@ -86,10 +95,7 @@ public enum ModelCatalog {
                 model["input_modalities"] = override
             }
             if let reasoning = overrides.reasoningEfforts[id] {
-                model["default_reasoning_level"] = reasoning.defaultEffort
-                model["supported_reasoning_levels"] = reasoning.levels.map { level in
-                    ["effort": level, "description": "Use the \(level) reasoning level."]
-                }
+                setReasoning(reasoning, on: &model)
             }
             return model
         }
@@ -114,6 +120,22 @@ public enum ModelCatalog {
         guard models.contains(where: { ($0["visibility"] as? String) == "list" })
         else { throw LauncherError.missingModels }
         return try JSONSerialization.data(withJSONObject: ["models": models], options: [.prettyPrinted, .sortedKeys])
+    }
+
+    public static func gatewayReasoningLevels(in catalog: Data, includesChatGPT: Bool) throws -> Set<String> {
+        let root = try JSONSerialization.jsonObject(with: catalog) as? [String: Any]
+        let models = root?["models"] as? [[String: Any]] ?? []
+        return Set(models.flatMap { model -> [String] in
+            if includesChatGPT, (model["slug"] as? String)?.hasPrefix("chatgpt/") == true { return [] }
+            return ModelOverrides.ReasoningEfforts(catalogEntry: model)?.levels ?? []
+        })
+    }
+
+    private static func setReasoning(_ reasoning: ModelOverrides.ReasoningEfforts, on model: inout [String: Any]) {
+        model["default_reasoning_level"] = reasoning.defaultEffort
+        model["supported_reasoning_levels"] = reasoning.levels.map { level in
+            ["effort": level, "description": "Use the \(level) reasoning level."]
+        }
     }
 
     private static func supportsResponses(_ entry: [String: Any]) -> Bool {

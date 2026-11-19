@@ -82,6 +82,7 @@ public struct Gateway {
 
         var request = URLRequest(url: baseURL.appendingPathComponent("models"), timeoutInterval: 15)
         request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization")
+        request.setValue("codex-model-reasoning", forHTTPHeaderField: "Prefer")
         return request
     }
 

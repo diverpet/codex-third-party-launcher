@@ -10,6 +10,7 @@ struct GatewayCoreTests {
         try tests.testCatalogIDsAndImageClassification()
         try tests.testCatalogUsesLaunchContextWindow()
         try tests.testReasoningLevelsUsePerGatewayDeclarations()
+        try tests.testReasoningLevelsDiscoveredFromModelList()
         tests.testDesktopReasoningLevelsPreserveSettings()
         try tests.testCatalogFiltersOnlyExplicitNonResponsesModels()
         try tests.testGPTExclusionUsesSameModelIDsAsProxy()
@@ -35,6 +36,7 @@ struct GatewayCoreTests {
         let request = try gateway.modelRequest(key: " fixture ")
         assertEqual(request.url?.absoluteString, "https://example.com/v1/models")
         assertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer fixture")
+        assertEqual(request.value(forHTTPHeaderField: "Prefer"), "codex-model-reasoning")
         for invalid in ["http://example.com/v1", "https://user@example.com", "https://example.com?key=x"] {
             assertThrows(try Gateway(invalid))
         }
@@ -186,6 +188,38 @@ struct GatewayCoreTests {
             let fixture = Data("{\"reasoningEfforts\":{\"tunable\":\(invalid)}}".utf8)
             assertThrows(try JSONDecoder().decode(ModelOverrides.self, from: fixture))
         }
+    }
+
+    func testReasoningLevelsDiscoveredFromModelList() throws {
+        let gateway = Data("""
+            {"data":[
+                {"id":"fresh","default_reasoning_level":"high","supported_reasoning_levels":[{"effort":"low"},{"effort":"high"},{"effort":"max"}]},
+                {"id":"plain"},
+                {"id":"invalid-default","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"high"}]},
+                {"id":"invalid-entry","default_reasoning_level":"high","supported_reasoning_levels":[{"effort":"high"},{}]},
+                {"id":"invalid-effort","default_reasoning_level":"high","supported_reasoning_levels":[{"effort":"high"},{"effort":"unknown"}]},
+                {"id":"hidden","supported_apis":["chat.completions"],"default_reasoning_level":"minimal","supported_reasoning_levels":[{"effort":"minimal"}]}
+            ]}
+            """.utf8)
+        let catalog = try ModelCatalog.make(gatewayResponse: gateway, bundledCatalog: { nil })
+        let root = try unwrap(JSONSerialization.jsonObject(with: catalog) as? [String: [[String: Any]]])
+        let models = try unwrap(root["models"])
+        assertEqual(models.first?["default_reasoning_level"] as? String, "high")
+        let levels = models.first?["supported_reasoning_levels"] as? [[String: String]]
+        assertEqual(levels?.compactMap { $0["effort"] }, ["low", "high", "max"])
+        for model in models.dropFirst() {
+            assertTrue(model["default_reasoning_level"] == nil)
+            assertEqual(model["supported_reasoning_levels"] as? [[String: String]], [])
+        }
+        let enabled = try ModelCatalog.gatewayReasoningLevels(in: catalog, includesChatGPT: false)
+        assertEqual(enabled, ["low", "high", "max"])
+        assertTrue(Gateway.enableReasoningLevels(enabled, in: "[desktop]\n").contains("\"max\""))
+
+        let overrides = try JSONDecoder().decode(ModelOverrides.self, from: Data(
+            #"{"reasoningEfforts":{"fresh":{"levels":["low"],"defaultEffort":"low"}}}"#.utf8
+        ))
+        let overridden = try ModelCatalog.make(gatewayResponse: gateway, bundledCatalog: { nil }, overrides: overrides)
+        assertEqual(try ModelCatalog.gatewayReasoningLevels(in: overridden, includesChatGPT: false), ["low"])
     }
 
     func testDesktopReasoningLevelsPreserveSettings() {

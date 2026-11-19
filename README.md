@@ -35,6 +35,19 @@
 
 - `supported_apis` 为字符串数组时，只有包含 `"responses"` 的模型会显示在菜单。字段缺省或为 `null` 时保留模型。
 - `input_modalities` 可声明 `["text"]` 或 `["text","image"]`。普通模型列表缺少该字段时，启动器按模型 ID 查找 Codex 内置目录，找不到时默认使用文本输入。
+- 支持档位发现的网关收到 `Prefer: codex-model-reasoning` 时，可在 `data[]` 的模型条目中返回 Codex 目录格式的 `default_reasoning_level` 和 `supported_reasoning_levels`。默认值必须出现在档位数组里。Launcher 使用同一套 Base URL 和 Key 读取列表，不发送试推理请求。
+
+```json
+{
+  "id": "example-reasoning-model",
+  "object": "model",
+  "default_reasoning_level": "high",
+  "supported_reasoning_levels": [
+    {"effort": "low", "description": "Faster responses"},
+    {"effort": "high", "description": "Deeper reasoning"}
+  ]
+}
+```
 
 菜单显示实际请求使用的 model code。
 
@@ -56,7 +69,7 @@
 }
 ```
 
-只填写实际网关允许通过 Responses 的 `reasoning.effort` 选择的档位。默认值必须在档位列表里。OpenAI 标准 `/models` 返回模型 ID，Launcher 从本地配置获取这些模型的档位。Codex 原生目录和 ChatGPT 账户模型可提供自己的档位。
+只填写实际网关允许通过 Responses 的 `reasoning.effort` 选择的档位。默认值必须在档位列表里。本地配置优先，同名模型的档位会覆盖网关声明。普通 OpenAI 模型列表可以省略档位字段，Launcher 仍会加载模型。Codex 原生目录和 ChatGPT 账户模型可提供自己的档位。
 
 对于 Desktop 默认隐藏的档位，启动器会补充隔离实例的档位可见性。已有 `[desktop]` 的 `enabled-reasoning-efforts` 设置优先。
 

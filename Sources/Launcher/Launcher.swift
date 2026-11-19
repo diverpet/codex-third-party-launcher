@@ -113,7 +113,7 @@ private final class Launcher: NSObject, NSApplicationDelegate {
         if !files.fileExists(atPath: config.path) {
             try writePrivate(Data(try gateway.configuration(catalog: catalog, userHome: home).utf8), to: config)
         }
-        let reasoningLevels = overrides.declaredReasoningLevels
+        let reasoningLevels = try ModelCatalog.gatewayReasoningLevels(in: models, includesChatGPT: includeChatGPT)
         if !reasoningLevels.isEmpty {
             let original = try String(contentsOf: config, encoding: .utf8)
             let configured = Gateway.enableReasoningLevels(reasoningLevels, in: original)
