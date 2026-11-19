@@ -8,11 +8,12 @@ if [[ -n "${SWIFT_BUILD_SYSTEM:-}" ]]; then
   set -- --build-system "$SWIFT_BUILD_SYSTEM"
 fi
 if [[ -n "${CODEX_LAUNCHER_ARCH:-}" ]]; then
-  set -- "$@" --arch "$CODEX_LAUNCHER_ARCH"
+  set -- "$@" --arch "$CODEX_LAUNCHER_ARCH" --scratch-path "$root/.build/$CODEX_LAUNCHER_ARCH"
 fi
 swift build "$@" --configuration release --product Launcher
 bin=$(swift build "$@" --configuration release --show-bin-path)
-app="$root/dist/Codex Third Party.app"
+output_dir=${CODEX_LAUNCHER_OUTPUT_DIR:-"$root/dist"}
+app="$output_dir/Codex Third Party.app"
 
 /bin/mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 /bin/cp "$root/Resources/Info.plist" "$app/Contents/Info.plist"

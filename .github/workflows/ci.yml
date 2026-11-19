@@ -9,7 +9,17 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-latest
+          - arch: x86_64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    env:
+      PACKAGE_ARCH: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
@@ -19,15 +29,19 @@ jobs:
       - run: go test ./...
         working-directory: Proxy
       - run: swift run GatewayChecks
-      - run: ./scripts/package.sh 1.0.0
+      - run: ./scripts/package.sh 1.0.0 "$PACKAGE_ARCH"
       - name: Check installer scope and payload
         run: |
           set -euo pipefail
-          pkg=dist/Codex-Third-Party-1.0.0-arm64.pkg
+          test "$(uname -m)" = "$PACKAGE_ARCH"
+          pkg="dist/Codex-Third-Party-1.0.0-$PACKAGE_ARCH.pkg"
           installer -pkg "$pkg" -dominfo | tee "$RUNNER_TEMP/install-domains.txt"
           grep -x CurrentUserHomeDirectory "$RUNNER_TEMP/install-domains.txt"
           pkgutil --expand-full "$pkg" "$RUNNER_TEMP/codex-package"
           app="$RUNNER_TEMP/codex-package/Launcher.pkg/Payload/Codex Third Party.app"
           test "$(find "$(dirname "$app")" -maxdepth 1 -name '*.app' | wc -l | tr -d ' ')" = 1
           test -s "$app/Contents/Resources/AppIcon.icns"
+          test "$(xmllint --xpath 'string(/installer-gui-script/options/@hostArchitectures)' "$RUNNER_TEMP/codex-package/Distribution")" = "$PACKAGE_ARCH"
+          test "$(lipo -archs "$app/Contents/MacOS/Launcher")" = "$PACKAGE_ARCH"
+          test "$(lipo -archs "$app/Contents/MacOS/GatewayProxy")" = "$PACKAGE_ARCH"
           codesign --verify --deep --strict "$app"

@@ -3,8 +3,10 @@ set -euo pipefail
 
 root=$(cd -- "$(dirname -- "$0")/.." && pwd)
 version=${1:-}
-if [[ $# -ne 1 || ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-  printf 'Usage: %s MAJOR.MINOR.PATCH\n' "$0" >&2
+architecture=${2-arm64}
+if [[ $# -gt 2 || ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ||
+      ( "$architecture" != arm64 && "$architecture" != x86_64 ) ]]; then
+  printf 'Usage: %s MAJOR.MINOR.PATCH [arm64|x86_64]\n' "$0" >&2
   exit 2
 fi
 if [[ -n "${CODEX_APPLICATION_SIGN_IDENTITY:-}" && -z "${CODEX_INSTALLER_SIGN_IDENTITY:-}" ]] ||
@@ -13,16 +15,14 @@ if [[ -n "${CODEX_APPLICATION_SIGN_IDENTITY:-}" && -z "${CODEX_INSTALLER_SIGN_ID
   exit 2
 fi
 
-CODEX_LAUNCHER_VERSION="$version" CODEX_LAUNCHER_ARCH=arm64 "$root/scripts/build.sh"
-app="$root/dist/Codex Third Party.app"
-/usr/bin/lipo "$app/Contents/MacOS/Launcher" -verify_arch arm64
-/usr/bin/lipo "$app/Contents/MacOS/GatewayProxy" -verify_arch arm64
-
 staging=$(/usr/bin/mktemp -d)
 trap '/bin/rm -rf -- "$staging"' EXIT
 payload="$staging/payload"
-/bin/mkdir -p "$payload"
-/usr/bin/ditto "$app" "$payload/Codex Third Party.app"
+CODEX_LAUNCHER_VERSION="$version" CODEX_LAUNCHER_ARCH="$architecture" \
+  CODEX_LAUNCHER_OUTPUT_DIR="$payload" "$root/scripts/build.sh"
+app="$payload/Codex Third Party.app"
+/usr/bin/lipo "$app/Contents/MacOS/Launcher" -verify_arch "$architecture"
+/usr/bin/lipo "$app/Contents/MacOS/GatewayProxy" -verify_arch "$architecture"
 
 identifier=io.github.diverpet.codex-third-party-launcher.pkg
 component=Launcher.pkg
@@ -44,7 +44,7 @@ cat > "$staging/Distribution.xml" <<EOF
 <installer-gui-script minSpecVersion="2">
   <title>Codex Third Party</title>
   <domains enable_anywhere="false" enable_currentUserHome="true" enable_localSystem="false"/>
-  <options customize="never" require-scripts="false" hostArchitectures="arm64"/>
+  <options customize="never" require-scripts="false" hostArchitectures="$architecture"/>
   <volume-check><allowed-os-versions><os-version min="14.0"/></allowed-os-versions></volume-check>
   <choices-outline><line choice="launcher"/></choices-outline>
   <choice id="launcher" visible="false"><pkg-ref id="$identifier"/></choice>
@@ -56,7 +56,8 @@ set -- --distribution "$staging/Distribution.xml" --package-path "$staging"
 if [[ -n "${CODEX_INSTALLER_SIGN_IDENTITY:-}" ]]; then
   set -- "$@" --sign "$CODEX_INSTALLER_SIGN_IDENTITY"
 fi
-package="Codex-Third-Party-${version}-arm64.pkg"
+package="Codex-Third-Party-${version}-${architecture}.pkg"
 /usr/bin/productbuild "$@" "$staging/$package"
+/bin/mkdir -p "$root/dist"
 /bin/mv "$staging/$package" "$root/dist/$package"
 printf '%s\n' "$root/dist/$package"

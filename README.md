@@ -4,9 +4,9 @@
 
 ## 安装
 
-发布包支持 Apple Silicon 和 macOS 14 或更新版本。
+发布包支持 Apple Silicon 和 Intel Mac，最低要求 macOS 14。
 
-1. 从 GitHub Releases 下载 `Codex-Third-Party-<版本>-arm64.pkg`，双击并安装到当前用户。 [GitHub Releases](https://github.com/diverpet/codex-third-party-launcher/releases)
+1. 从 GitHub Releases 下载对应架构的安装包，双击并安装到当前用户。Apple Silicon 选 `Codex-Third-Party-<版本>-arm64.pkg`，Intel Mac 选 `Codex-Third-Party-<版本>-x86_64.pkg`。 [GitHub Releases](https://github.com/diverpet/codex-third-party-launcher/releases)
 2. 在 Finder 打开 `~/Applications/Codex Third Party.app`。首次运行会检查本机安装的官方 ChatGPT.app，校验 OpenAI 签名，再复制到 `~/Applications/.codex-thirdparty/`。
 3. 如果 Mac 尚未安装带 Codex 的官方 ChatGPT，启动器会提供下载入口。安装官方 App 后重新打开启动器即可。 [下载 ChatGPT](https://chatgpt.com/download/)
 
@@ -88,10 +88,11 @@
 ```sh
 swift run GatewayChecks
 (cd Proxy && go test ./...)
-./scripts/package.sh 1.1.0
+./scripts/package.sh 1.1.0 arm64
+./scripts/package.sh 1.1.0 x86_64
 ```
 
-本地命令默认生成未签名的测试安装包 `dist/Codex-Third-Party-1.1.0-arm64.pkg`。仅需要应用包时执行 `./scripts/build.sh`。也可以用 `./scripts/install.sh [官方 ChatGPT.app 路径]` 从源码安装。
+本地打包默认输出未签名的测试安装包到 `dist/`。省略架构参数时构建 `arm64`。仅需要应用包时执行 `./scripts/build.sh`。也可以用 `./scripts/install.sh [官方 ChatGPT.app 路径]` 从源码安装。
 
 验证本机官方 App 的签名、首次复制和重复运行时，可以执行 `CODEX_TEST_OFFICIAL_APP=/Applications/ChatGPT.app swift run GatewayChecks`。测试使用临时目录。
 
@@ -109,4 +110,4 @@ swift run GatewayChecks
 | Secret | `APPLE_NOTARY_KEY_ID` | App Store Connect API Key ID |
 | Secret | `APPLE_NOTARY_ISSUER_ID` | App Store Connect Issuer ID |
 
-推送形如 `v1.1.0` 的 tag 后，`macOS Release` 会编译和测试、签名、公证、附加票据，并把验证通过的安装包和 SHA-256 校验和发布到 GitHub Releases。
+推送形如 `v1.1.0` 的 tag 后，`macOS Release` 会编译和测试、签名、公证、附加票据，并把两种架构的安装包及各自的 SHA-256 校验和发布到同一个 GitHub Release。

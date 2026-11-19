@@ -28,7 +28,7 @@ jobs:
       - run: go test ./...
         working-directory: Proxy
       - run: swift run GatewayChecks
-      - name: Build, sign and notarize the installer
+      - name: Build, sign and notarize both installers
         env:
           CODEX_APPLICATION_SIGN_IDENTITY: ${{ vars.APPLE_DEVELOPER_ID_APPLICATION }}
           CODEX_INSTALLER_SIGN_IDENTITY: ${{ vars.APPLE_DEVELOPER_ID_INSTALLER }}
@@ -65,21 +65,24 @@ jobs:
           umask 022
 
           version="${GITHUB_REF_NAME#v}"
-          ./scripts/package.sh "$version"
-          package="Codex-Third-Party-${version}-arm64.pkg"
-          xcrun notarytool submit "dist/$package" --key "$credentials/AuthKey.p8" \
-            --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" --wait
-          xcrun stapler staple "dist/$package"
-          xcrun stapler validate "dist/$package"
-          pkgutil --check-signature "dist/$package"
-          spctl --assess --type install --verbose "dist/$package"
-          (cd dist && shasum -a 256 "$package" > "$package.sha256")
+          for architecture in arm64 x86_64; do
+            ./scripts/package.sh "$version" "$architecture"
+            package="Codex-Third-Party-${version}-${architecture}.pkg"
+            xcrun notarytool submit "dist/$package" --key "$credentials/AuthKey.p8" \
+              --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" --wait
+            xcrun stapler staple "dist/$package"
+            xcrun stapler validate "dist/$package"
+            pkgutil --check-signature "dist/$package"
+            spctl --assess --type install --verbose "dist/$package"
+            (cd dist && shasum -a 256 "$package" > "$package.sha256")
+          done
       - name: Publish to GitHub Releases
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
-          package="dist/Codex-Third-Party-${version}-arm64.pkg"
-          gh release create "$GITHUB_REF_NAME" "$package" "$package.sha256" \
+          arm="dist/Codex-Third-Party-${version}-arm64.pkg"
+          intel="dist/Codex-Third-Party-${version}-x86_64.pkg"
+          gh release create "$GITHUB_REF_NAME" "$arm" "$arm.sha256" "$intel" "$intel.sha256" \
             --verify-tag --generate-notes --title "Codex Third Party $version"
