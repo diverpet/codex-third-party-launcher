@@ -62,7 +62,7 @@ func TestChatGPTAuthorizedRoutesKeepCredentialsSeparate(t *testing.T) {
 	handler, err := makeHandler(settings{BaseURL: gateway.URL + "/v1", UpstreamKey: "gateway-key",
 		LocalKey: "local-key", ModelPattern: modelPattern}, &chatGPTRoute{
 		baseURL: official.URL + "/v1",
-		aliases: map[string]string{"chatgpt/gpt-6.1-sol": "gpt-6.1-sol"},
+		aliases: map[string]chatGPTModelRoute{"chatgpt/gpt-6.1-sol": {slug: "gpt-6.1-sol"}},
 		access:  func(context.Context) (string, error) { return "account-token", nil },
 	})
 	if err != nil {
@@ -97,6 +97,106 @@ func TestChatGPTAuthorizedRoutesKeepCredentialsSeparate(t *testing.T) {
 	}
 	if gatewayCalls.Load() != 1 || chatGPTCalls.Load() != 1 {
 		t.Fatalf("unexpected calls across providers: gateway=%d ChatGPT=%d", gatewayCalls.Load(), chatGPTCalls.Load())
+	}
+}
+
+func TestChatGPTSpeedVariantsInCatalogAndResponses(t *testing.T) {
+	var models []map[string]json.RawMessage
+	fixture := `[
+		{"slug":"gpt-fixture","display_name":"GPT Fixture","visibility":"list","context_window":272000,
+		 "service_tiers":[{"id":"ultrafast"},{"id":"priority"},{"id":"fast"}],"default_service_tier":"fast"},
+		{"slug":"legacy","visibility":"list","additional_speed_tiers":["fast"]},
+		{"slug":"standard-only","visibility":"list","service_tiers":[],"additional_speed_tiers":["fast"]},
+		{"slug":"hidden","visibility":"hide","service_tiers":[{"id":"priority"}]}
+	]`
+	if err := json.Unmarshal([]byte(fixture), &models); err != nil {
+		t.Fatal(err)
+	}
+	catalog, aliases, err := planCatalog(models)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var visible struct {
+		Models []struct {
+			Slug          string `json:"slug"`
+			DisplayName   string `json:"display_name"`
+			ContextWindow int    `json:"context_window"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(catalog, &visible); err != nil {
+		t.Fatal(err)
+	}
+	want := []struct{ alias, label, model, tier string }{
+		{"chatgpt/gpt-fixture", "GPT Fixture · ChatGPT · 标准", "gpt-fixture", "default"},
+		{"chatgpt/gpt-fixture/fast", "GPT Fixture · ChatGPT · 快速", "gpt-fixture", "priority"},
+		{"chatgpt/gpt-fixture/ultrafast", "GPT Fixture · ChatGPT · 极速", "gpt-fixture", "ultrafast"},
+		{"chatgpt/legacy", "legacy · ChatGPT · 标准", "legacy", "default"},
+		{"chatgpt/legacy/fast", "legacy · ChatGPT · 快速", "legacy", "priority"},
+		{"chatgpt/standard-only", "standard-only · ChatGPT", "standard-only", "auto"},
+	}
+	if len(visible.Models) != len(want) || len(aliases) != len(want) {
+		t.Fatalf("unexpected model choices: %v", visible.Models)
+	}
+	if strings.Contains(string(catalog), `"default_service_tier"`) {
+		t.Fatal("the default tier must be selected by alias rather than inherited from the model")
+	}
+	for i, choice := range want {
+		entry := visible.Models[i]
+		if entry.Slug != choice.alias || entry.DisplayName != choice.label ||
+			(choice.model == "gpt-fixture" && entry.ContextWindow != 272000) {
+			t.Errorf("unexpected catalog entry: %+v", entry)
+		}
+	}
+
+	type wireRequest struct {
+		Model string `json:"model"`
+		Tier  string `json:"service_tier"`
+	}
+	requests := make(chan wireRequest, len(want))
+	official := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		var payload wireRequest
+		if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+			t.Error(err)
+		}
+		requests <- payload
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer official.Close()
+	handler, err := makeHandler(settings{BaseURL: "http://127.0.0.1:1/v1", UpstreamKey: "gateway-key",
+		LocalKey: "local-key", ModelPattern: modelPattern}, &chatGPTRoute{
+		baseURL: official.URL + "/v1",
+		aliases: aliases,
+		access:  func(context.Context) (string, error) { return "account-token", nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	send := func(model string) int {
+		request := httptest.NewRequest(http.MethodPost, "/responses", strings.NewReader(
+			`{"model":"`+model+`","input":"test","service_tier":"auto"}`))
+		request.Header.Set("Authorization", "Bearer local-key")
+		request.Header.Set("Content-Type", "application/json")
+		result := httptest.NewRecorder()
+		handler.ServeHTTP(result, request)
+		return result.Code
+	}
+	for _, choice := range want {
+		if status := send(choice.alias); status != http.StatusOK {
+			t.Fatalf("%s returned HTTP %d", choice.alias, status)
+		}
+		select {
+		case got := <-requests:
+			if got != (wireRequest{Model: choice.model, Tier: choice.tier}) {
+				t.Errorf("%s sent %+v upstream", choice.alias, got)
+			}
+		default:
+			t.Fatalf("%s did not reach ChatGPT", choice.alias)
+		}
+	}
+	for _, unavailable := range []string{"chatgpt/legacy/ultrafast", "chatgpt/standard-only/fast", "chatgpt/hidden/fast"} {
+		if status := send(unavailable); status != http.StatusBadRequest {
+			t.Errorf("%s was not rejected locally, got HTTP %d", unavailable, status)
+		}
 	}
 }
 

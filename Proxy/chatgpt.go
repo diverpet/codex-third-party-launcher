@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -312,7 +313,7 @@ func (p *chatGPTPlan) save(state planRecord) error {
 	return os.Rename(file.Name(), p.path)
 }
 
-func (p *chatGPTPlan) models(ctx context.Context) ([]byte, map[string]string, error) {
+func (p *chatGPTPlan) models(ctx context.Context) ([]byte, map[string]chatGPTModelRoute, error) {
 	token, err := p.accessToken(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -339,8 +340,54 @@ func (p *chatGPTPlan) models(ctx context.Context) ([]byte, map[string]string, er
 	return planCatalog(catalog.Models)
 }
 
-func planCatalog(models []map[string]json.RawMessage) ([]byte, map[string]string, error) {
-	aliases := make(map[string]string)
+type chatGPTModelRoute struct {
+	slug        string
+	serviceTier string
+}
+
+type chatGPTSpeed struct {
+	suffix string
+	label  string
+	tier   string
+}
+
+func chatGPTSpeeds(model map[string]json.RawMessage) []chatGPTSpeed {
+	var advertised []struct {
+		ID string `json:"id"`
+	}
+	var tierIDs []string
+	if raw := model["service_tiers"]; len(raw) > 0 && !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		if json.Unmarshal(raw, &advertised) != nil {
+			return nil
+		}
+		for _, tier := range advertised {
+			tierIDs = append(tierIDs, tier.ID)
+		}
+	} else if json.Unmarshal(model["additional_speed_tiers"], &tierIDs) != nil {
+		return nil
+	}
+
+	var fast, ultrafast bool
+	for _, tier := range tierIDs {
+		switch tier {
+		case "fast", "priority":
+			fast = true
+		case "ultrafast":
+			ultrafast = true
+		}
+	}
+	speeds := make([]chatGPTSpeed, 0, 2)
+	if fast {
+		speeds = append(speeds, chatGPTSpeed{suffix: "/fast", label: "快速", tier: "priority"})
+	}
+	if ultrafast {
+		speeds = append(speeds, chatGPTSpeed{suffix: "/ultrafast", label: "极速", tier: "ultrafast"})
+	}
+	return speeds
+}
+
+func planCatalog(models []map[string]json.RawMessage) ([]byte, map[string]chatGPTModelRoute, error) {
+	aliases := make(map[string]chatGPTModelRoute)
 	visible := make([]map[string]json.RawMessage, 0, len(models))
 	for _, model := range models {
 		var slug, visibility, name string
@@ -356,10 +403,31 @@ func planCatalog(models []map[string]json.RawMessage) ([]byte, map[string]string
 		if name == "" {
 			name = slug
 		}
-		aliases[alias] = slug
-		model["slug"], _ = json.Marshal(alias)
-		model["display_name"], _ = json.Marshal(name + " · ChatGPT")
-		visible = append(visible, model)
+		name += " · ChatGPT"
+		base := maps.Clone(model)
+		base["slug"], _ = json.Marshal(alias)
+		route := chatGPTModelRoute{slug: slug}
+		speeds := chatGPTSpeeds(model)
+		if len(speeds) > 0 {
+			// The model choice now owns its speed, independently of Desktop's speed controls.
+			delete(base, "additional_speed_tiers")
+			delete(base, "service_tiers")
+			delete(base, "default_service_tier")
+			route.serviceTier = "default"
+			base["display_name"], _ = json.Marshal(name + " · 标准")
+		} else {
+			base["display_name"], _ = json.Marshal(name)
+		}
+		aliases[alias] = route
+		visible = append(visible, base)
+		for _, speed := range speeds {
+			variantAlias := alias + speed.suffix
+			variant := maps.Clone(base)
+			variant["slug"], _ = json.Marshal(variantAlias)
+			variant["display_name"], _ = json.Marshal(name + " · " + speed.label)
+			aliases[variantAlias] = chatGPTModelRoute{slug: slug, serviceTier: speed.tier}
+			visible = append(visible, variant)
+		}
 	}
 	if len(aliases) == 0 {
 		return nil, nil, errors.New("chatgpt_models_unavailable")
@@ -370,12 +438,12 @@ func planCatalog(models []map[string]json.RawMessage) ([]byte, map[string]string
 
 type chatGPTRoute struct {
 	baseURL string
-	aliases map[string]string
+	aliases map[string]chatGPTModelRoute
 	access  func(context.Context) (string, error)
 }
 
 func (p *chatGPTRoute) serve(w http.ResponseWriter, request *http.Request, model string, body []byte) {
-	slug, ok := p.aliases[model]
+	route, ok := p.aliases[model]
 	if !ok {
 		reject(w, http.StatusBadRequest, "chatgpt_model_unavailable", "This model is unavailable in the authorized ChatGPT account.")
 		return
@@ -384,7 +452,7 @@ func (p *chatGPTRoute) serve(w http.ResponseWriter, request *http.Request, model
 		reject(w, http.StatusBadRequest, "chatgpt_route_not_supported", "This ChatGPT account connection supports streaming Responses.")
 		return
 	}
-	payload, err := planRequest(body, slug)
+	payload, err := planRequest(body, route)
 	if err != nil {
 		reject(w, http.StatusBadRequest, "chatgpt_request_not_supported", "ChatGPT account requests require the full input history.")
 		return
@@ -411,7 +479,7 @@ func (p *chatGPTRoute) serve(w http.ResponseWriter, request *http.Request, model
 	reverseProxy(target).ServeHTTP(w, request)
 }
 
-func planRequest(body []byte, slug string) ([]byte, error) {
+func planRequest(body []byte, route chatGPTModelRoute) ([]byte, error) {
 	var payload map[string]json.RawMessage
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, err
@@ -462,7 +530,10 @@ func planRequest(body []byte, slug string) ([]byte, error) {
 	if input := bytes.TrimSpace(payload["input"]); len(input) == 0 || input[0] != '[' {
 		return nil, errors.New("ChatGPT requires input messages")
 	}
-	payload["model"], _ = json.Marshal(slug)
+	payload["model"], _ = json.Marshal(route.slug)
+	if route.serviceTier != "" {
+		payload["service_tier"], _ = json.Marshal(route.serviceTier)
+	}
 	payload["store"] = json.RawMessage("false")
 	payload["stream"] = json.RawMessage("true")
 	return json.Marshal(payload)
