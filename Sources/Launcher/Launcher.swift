@@ -52,9 +52,21 @@ private final class Launcher: NSObject, NSApplicationDelegate {
             return
         }
 
-        guard let (address, secret, contextWindow, excludeGPT, includeChatGPT) = promptForGateway() else { return }
+        let savedCredentials: GatewayCredentials?
+        do {
+            savedCredentials = try await Task.detached { try GatewayCredentials.load() }.value
+        } catch {
+            savedCredentials = nil
+            showKeychainWarning("Could not load the saved gateway credentials", error: error)
+        }
+
+        guard let (address, secret, contextWindow, excludeGPT, includeChatGPT) =
+            promptForGateway(savedCredentials: savedCredentials) else { return }
         let gateway = try Gateway(address)
-        let key = secret.trimmingCharacters(in: .whitespacesAndNewlines)
+        var key = secret.trimmingCharacters(in: .whitespacesAndNewlines)
+        if key.isEmpty, let savedCredentials, savedCredentials.baseURL == gateway.baseURL.absoluteString {
+            key = savedCredentials.apiKey
+        }
         let request = try gateway.modelRequest(key: key)
         let profile = home.appendingPathComponent(".codex-thirdparty/gateways/\(gateway.profileID)")
         let appData = home.appendingPathComponent("Library/Application Support/Codex Third Party/gateways/\(gateway.profileID)")
@@ -106,6 +118,15 @@ private final class Launcher: NSObject, NSApplicationDelegate {
             let original = try String(contentsOf: config, encoding: .utf8)
             let configured = Gateway.enableReasoningLevels(reasoningLevels, in: original)
             if configured != original { try writePrivate(Data(configured.utf8), to: config) }
+        }
+
+        let credentials = GatewayCredentials(baseURL: gateway.baseURL.absoluteString, apiKey: key)
+        if credentials != savedCredentials {
+            do {
+                try await Task.detached { try credentials.save() }.value
+            } catch {
+                showKeychainWarning("Could not save the gateway credentials for next time", error: error)
+            }
         }
 
         var environment = ProcessInfo.processInfo.environment
@@ -295,18 +316,29 @@ private final class Launcher: NSObject, NSApplicationDelegate {
         if !enabled { chatGPTCheckbox?.state = .off }
     }
 
-    private func promptForGateway() -> (String, String, Int, Bool, Bool)? {
+    private func showKeychainWarning(_ message: String, error: Error) {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.informativeText = error.localizedDescription
+        alert.addButton(withTitle: "Continue")
+        alert.runModal()
+    }
+
+    private func promptForGateway(savedCredentials: GatewayCredentials?) -> (String, String, Int, Bool, Bool)? {
         let alert = NSAlert()
         alert.icon = NSApp.applicationIconImage
         alert.messageText = "Connect to a gateway"
-        alert.informativeText = "Enter a Responses API Base URL and API key."
+        alert.informativeText = savedCredentials == nil
+            ? "Enter a Responses API Base URL and API key. The launcher saves them in macOS Keychain after loading models."
+            : "Leave the API key blank to reuse the saved key for this Base URL. Enter a key to replace it or to connect to a different gateway."
         alert.addButton(withTitle: "Load Models and Launch")
         alert.addButton(withTitle: "Cancel")
 
         let address = NSTextField()
         address.placeholderString = "Base URL"
+        if let savedCredentials { address.stringValue = savedCredentials.baseURL }
         let key = NSSecureTextField()
-        key.placeholderString = "API key (this launch only)"
+        key.placeholderString = savedCredentials == nil ? "API key" : "API key (saved for the previous Base URL)"
         let context = NSTextField()
         context.placeholderString = "最大上下文（仅 API 模型，默认 \(Gateway.defaultContextWindow / 1_000)K）"
         context.setAccessibilityLabel("最大上下文")

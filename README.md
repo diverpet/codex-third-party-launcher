@@ -15,11 +15,11 @@
 ## 使用
 
 1. 在 Finder 打开 `~/Applications/Codex Third Party.app`。
-2. 填写网关的完整 Base URL 和 API key。两个输入框默认留空。远程网关使用 HTTPS，本机回环网关也可使用 HTTP。
+2. 首次使用时填写网关的完整 Base URL 和 API key。成功加载模型后，启动器将这组凭据保存到 macOS 钥匙串。下次打开会填入上次的 Base URL，API key 留空即可复用。切换 Base URL 或更换密钥时，填写要使用的 API key。远程网关使用 HTTPS，本机回环网关也可使用 HTTP。
 3. **最大上下文** 可留空，默认给本次启动的所有 Base URL 模型设置 500,000 token。也可以输入实际的上限，例如 `128000` 或 `128K`。ChatGPT 账号模型使用官方目录提供的窗口。
 4. 如需阻止 GPT 系列消耗网关额度，勾选 **排除 GPT 系列模型（推荐）**，再点 **Load Models and Launch**。切换网关或过滤设置前，先退出隔离实例，再打开启动器。
 
-网关至少需要支持 `GET /models` 与 `POST /responses`（相对 Base URL），并接受 Bearer token。密钥只在本次启动时传给子进程，不会由启动器写入文件。每个 Base URL 使用独立的 Codex 数据目录和桌面状态，原官方实例可以照常使用。启动器默认将用户主目录标为不加载项目配置，避免官方 `~/.codex/config.toml` 被第三方实例当作项目配置。实际项目目录可按需单独信任。 [网关兼容性](https://learn.chatgpt.com/docs/enterprise/gateway-compatibility)
+网关至少需要支持 `GET /models` 与 `POST /responses`（相对 Base URL），并接受 Bearer token。启动器只在钥匙串中保存 API key，并在启动时通过环境变量把会话所需的凭据传给子进程。每个 Base URL 使用独立的 Codex 数据目录和桌面状态，原官方实例可以照常使用。启动器默认将用户主目录标为不加载项目配置，避免官方 `~/.codex/config.toml` 被第三方实例当作项目配置。实际项目目录可按需单独信任。 [网关兼容性](https://learn.chatgpt.com/docs/enterprise/gateway-compatibility)
 
 原生 Computer Use 仍由 Codex Desktop 管理。它需要本机的屏幕录制和辅助功能权限，以及能处理截图和工具调用的模型、兼容的网关。 [Computer Use 设置](https://learn.chatgpt.com/docs/computer-use)
 
